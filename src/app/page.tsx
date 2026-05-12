@@ -1,101 +1,87 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import { useProjects } from "@/context/ProjectContext";
+
+import SeeAllButton from "@/components/SeeAllButton";
+import StatCard from "@/components/StatCard";
+import ProjectHealthPanel from "@/components/ProjectHealthPanel";
+import ActiveAlertsPanel from "@/components/ActiveAlertsPanel";
+import QuickActionsPanel from "@/components/QuickActionsPanel";
+import OverallPerformanceChart from "@/components/OverallPerformanceChart";
+import CreateProjectHeaderButton from "@/components/CreateProjectHeaderButton";
+import CreateProjectModal, { CreateProjectData } from "@/components/CreateProjectModal";
+import { mockStats, mockAlerts, mockPerformanceData } from "@/data/mock-data";
+import { Folder, Code2, Activity, ShieldAlert, BellRing } from "lucide-react";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const { projects, addProject } = useProjects();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const handleCreateNewProject = (data: CreateProjectData) => {
+    addProject(data.name, data.url); 
+  };
+
+  // REAL-TIME DASHBOARD STATS
+  const totalProjects = projects.length;
+  // This adds up EVERY endpoint across EVERY project you have created!
+  const totalEndpoints = projects.reduce((acc, project) => acc + project.endpoints.length, 0);
+
+  return (
+    <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#111827", margin: 0 }}>Overview</h1>
+          <p style={{ fontSize: 14, color: "#6b7280", margin: "4px 0 0" }}>All projects · Last 24h</p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+        <CreateProjectHeaderButton onClick={() => setIsCreateModalOpen(true)} />
+      </div>
+
+      <div style={{ display: "grid", gap: 16, marginTop: 24 }} className="grid-cols-1 md:grid-cols-3 lg:grid-cols-5">
+        <StatCard title="Total Projects" value={totalProjects} trendText={`↑ 1 vs yesterday`} trendDirection="up" icon={<Folder size={20} color="#2563eb" />} />
+        
+        {/* Now completely dynamic based on your actual added APIs */}
+        <StatCard title="APIs Monitored" value={totalEndpoints} trendText={`↑ 3 vs yesterday`} trendDirection="up" icon={<Code2 size={20} color="#16a34a" />} />
+        
+        <StatCard title="Avg Health Score" value={`${mockStats.avgHealthScore}%`} trendText={`↑ ${mockStats.deltaHealth}% vs yesterday`} trendDirection="up" icon={<Activity size={20} color="#d97706" />} />
+        <StatCard title="APIs Tested Today" value={mockStats.apisTodayTested} trendText={`↑ ${mockStats.deltaTodayTested} vs yesterday`} trendDirection="up" icon={<ShieldAlert size={20} color="#2563eb" />} />
+        <StatCard title="Active Alerts" value={mockStats.activeAlerts} trendText={`${mockStats.criticalAlerts} critical · ${mockStats.warningAlerts} warning`} trendDirection="down" icon={<BellRing size={20} color="#dc2626" />} />
+      </div>
+
+      <div style={{ display: "grid", gap: 24, marginTop: 24 }} className="grid-cols-1 lg:grid-cols-3">
+        {projects.slice(0, 3).map((panel) => (
+          <ProjectHealthPanel 
+            key={panel.id} 
+            projectId={panel.id} 
+            title={panel.title} 
+            endpoints={panel.endpoints} 
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 32 }}>
+        <SeeAllButton />
+      </div>
+
+      <div style={{ marginTop: 48 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: "#111827", margin: 0, marginBottom: 16 }}>Needs Attention</h2>
+        <ActiveAlertsPanel />
+      </div>
+
+      <div style={{ display: "grid", gap: 24, marginTop: 24 }} className="grid-cols-1 lg:grid-cols-3">
+        <div className="lg:col-span-1">
+          <QuickActionsPanel />
+        </div>
+        <div className="lg:col-span-2">
+          <OverallPerformanceChart data={mockPerformanceData} stats={mockStats} />
+        </div>
+      </div>
+
+      <CreateProjectModal 
+        isOpen={isCreateModalOpen} 
+        onClose={() => setIsCreateModalOpen(false)} 
+        onCreate={handleCreateNewProject}
+      />
     </div>
   );
 }
