@@ -113,7 +113,6 @@ export default function ProjectGridCard({ projectId, endpoints, title }: Project
         isOpen={isDrawerOpen} 
         onClose={() => setIsDrawerOpen(false)} 
         projectName={projectName} 
-        projectId={projectId} 
         endpoints={endpoints} 
       />
     </>
