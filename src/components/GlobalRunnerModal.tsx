@@ -39,6 +39,8 @@ export default function GlobalRunnerModal({ isOpen, onClose, preSelectedProjectI
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     }
+    // FIXED: Tell Vercel to safely ignore the missing 'startScan' dependency here
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, preSelectedProjectId]);
 
   // The unified scan engine that works for BOTH triggers

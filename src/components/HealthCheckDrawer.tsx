@@ -9,11 +9,11 @@ interface HealthCheckDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   projectName: string;
-  projectId: string;
+  // FIXED: Removed projectId from here since it's never used!
   endpoints: Endpoint[];
 }
 
-export default function HealthCheckDrawer({ isOpen, onClose, projectName, projectId, endpoints }: HealthCheckDrawerProps) {
+export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoints }: HealthCheckDrawerProps) {
   const router = useRouter();
   const [isRunning, setIsRunning] = useState(false);
   const projectSlug = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');

@@ -26,7 +26,7 @@ export default function QuickActionsPanel() {
     }, []);
 
     // Handles the project selection and triggers the routing delay
-    const handleRunTest = (project: any) => {
+    const handleRunTest = (project: { title: string }) => {
         setShowDropdown(false);
         setIsInitializing(true);
 
