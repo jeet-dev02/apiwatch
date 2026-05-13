@@ -11,7 +11,8 @@ import QuickActionsPanel from "@/components/QuickActionsPanel";
 import OverallPerformanceChart from "@/components/OverallPerformanceChart";
 import CreateProjectHeaderButton from "@/components/CreateProjectHeaderButton";
 import CreateProjectModal, { CreateProjectData } from "@/components/CreateProjectModal";
-import { mockStats, mockAlerts, mockPerformanceData } from "@/data/mock-data";
+// FIXED: Removed mockAlerts from this import line since it wasn't being used!
+import { mockStats, mockPerformanceData } from "@/data/mock-data";
 import { Folder, Code2, Activity, ShieldAlert, BellRing } from "lucide-react";
 
 export default function Home() {

@@ -2,14 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { PlayCircle, CalendarClock, PlusCircle, ChevronDown, Loader2 } from "lucide-react";
+import { PlayCircle, CalendarClock, ChevronDown, Loader2 } from "lucide-react";
 import { useProjects } from "@/context/ProjectContext";
 
-interface QuickActionsPanelProps {
-  onAddApi?: () => void;
-}
-
-export default function QuickActionsPanel({ onAddApi }: QuickActionsPanelProps) {
+// Removed the onAddApi prop interface since we no longer need it
+export default function QuickActionsPanel() {
     const router = useRouter();
     const { projects } = useProjects();
 
@@ -51,7 +48,7 @@ export default function QuickActionsPanel({ onAddApi }: QuickActionsPanelProps) 
                     gridTemplateColumns: "1fr",
                 }}
             >
-                {/* Card 1: Run Test Suite (Now with Dropdown Logic) */}
+                {/* Card 1: Run Test Suite */}
                 <div style={{ position: "relative" }} ref={dropdownRef}>
                     <button
                         disabled={isInitializing}
@@ -185,36 +182,6 @@ export default function QuickActionsPanel({ onAddApi }: QuickActionsPanelProps) 
                     </div>
                 </button>
 
-                {/* Card 3: Add API */}
-                <button
-                    onClick={onAddApi}
-                    style={{
-                        backgroundColor: "#ffffff",
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 12,
-                        padding: 16,
-                        textAlign: "left",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 16,
-                        cursor: "pointer",
-                        transition: "all 0.2s",
-                    }}
-                    onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = "#eff6ff";
-                        e.currentTarget.style.borderColor = "#bfdbfe";
-                    }}
-                    onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = "#ffffff";
-                        e.currentTarget.style.borderColor = "#e5e7eb";
-                    }}
-                >
-                    <PlusCircle color="#2563eb" size={24} style={{ flexShrink: 0 }} />
-                    <div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>Add API</div>
-                        <div style={{ fontSize: 12, color: "#6b7280" }}>Configure new API</div>
-                    </div>
-                </button>
             </div>
             
             {/* Inline styles for the loading spinner and dropdown animation */}

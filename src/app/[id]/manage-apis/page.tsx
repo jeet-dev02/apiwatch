@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Plus, Play, Save, Trash2, Settings2, ArrowLeft, Check, AlertCircle, UploadCloud, PenLine, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation"; // REMOVED useRouter
 import { useProjects, Endpoint, HttpMethod } from "@/context/ProjectContext";
 
 const emptyEndpoint: Endpoint = {
@@ -12,7 +12,7 @@ const emptyEndpoint: Endpoint = {
 
 export default function ApiManagerPage() {
   const params = useParams();
-  const router = useRouter();
+  // REMOVED: const router = useRouter(); 
   const projectSlugFromUrl = params.id as string;
   
   const { projects, updateProjectEndpoints } = useProjects();
@@ -80,14 +80,14 @@ export default function ApiManagerPage() {
 
   // --- Core Actions ---
   const handleSelect = (endpoint: Endpoint) => {
-    setIsManualMode(false); // Close manual mode if active
+    setIsManualMode(false);
     setActiveId(endpoint.id);
     setFormData(endpoint);
     setActiveTab("Request");
   };
 
   const handleAddNew = () => {
-    setIsManualMode(true); // Forces zero state to hide
+    setIsManualMode(true);
     setActiveId("new");
     setFormData(emptyEndpoint);
     setActiveTab("Request");
@@ -111,24 +111,14 @@ export default function ApiManagerPage() {
     setEndpoints(newEndpointList);
     updateProjectEndpoints(currentProject.id, newEndpointList);
     
-    setIsManualMode(false); // Successfully created, exit manual override mode
+    setIsManualMode(false);
     setActiveId(newId);
     setFormData(newEndpoint);
     setSaveStatus("saved");
     setTimeout(() => setSaveStatus("idle"), 2000);
   };
 
-  const handleDeleteEndpoint = (idToDelete: number | "new") => {
-    const filteredList = endpoints.filter(ep => ep.id !== idToDelete);
-    setEndpoints(filteredList);
-    updateProjectEndpoints(currentProject.id, filteredList);
-    
-    if (filteredList.length > 0) {
-      handleSelect(filteredList[0]);
-    } else {
-      setIsManualMode(false); // Triggers Zero State again
-    }
-  };
+  // REMOVED handleDeleteEndpoint to fix unused variable error
 
   // --- IMPORT SIMULATION ENGINE ---
   const executeImport = () => {
@@ -136,7 +126,6 @@ export default function ApiManagerPage() {
     setIsImporting(true);
     
     setTimeout(() => {
-      // Simulate real endpoints coming from backend
       const imported: Endpoint[] = [
         { id: Date.now() + 1, method: "GET", path: "/api/users", url: "https://api.example.com/api/users", authType: "Bearer Token (JWT)", token: "", headers: [{ key: "Accept", value: "application/json" }], body: "", expectedStatus: "200", maxResponseTime: "500" },
         { id: Date.now() + 2, method: "POST", path: "/api/users", url: "https://api.example.com/api/users", authType: "Bearer Token (JWT)", token: "", headers: [{ key: "Content-Type", value: "application/json" }], body: '{\n  "name": "string",\n  "email": "user@example.com"\n}', expectedStatus: "201", maxResponseTime: "800" },
@@ -150,7 +139,7 @@ export default function ApiManagerPage() {
       setIsImporting(false);
       setShowImportBox(false);
       setImportUrl("");
-      handleSelect(imported[0]); // Select the first imported one to show it off!
+      handleSelect(imported[0]);
     }, 1500);
   };
 
@@ -257,7 +246,8 @@ export default function ApiManagerPage() {
               <div style={{ maxWidth: 560, width: "100%" }}>
                 <div style={{ textAlign: "center", marginBottom: 40 }}>
                   <h2 style={{ fontSize: 24, fontWeight: 700, color: "#111827", margin: "0 0 12px 0" }}>Welcome to your Workspace</h2>
-                  <p style={{ fontSize: 15, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>You don't have any endpoints configured yet. How would you like to add your APIs to this project?</p>
+                  {/* FIXED: Replaced unescaped ' with &apos; */}
+                  <p style={{ fontSize: 15, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>You don&apos;t have any endpoints configured yet. How would you like to add your APIs to this project?</p>
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

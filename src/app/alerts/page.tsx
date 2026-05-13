@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { BellRing, CheckCircle2, Search, Filter, X, Check, Activity, Clock, FileCode2 } from "lucide-react";
+// FIXED: Removed the unused 'Filter' import
+import { BellRing, CheckCircle2, Search, X, Check, Activity, Clock, FileCode2 } from "lucide-react";
 import { useAlerts, StatefulAlert } from "@/context/AlertContext";
 
 export default function AlertsPage() {
