@@ -95,8 +95,7 @@ export default function ProjectHealthPanel({ projectId, endpoints, title }: Proj
       <HealthCheckDrawer 
         isOpen={isDrawerOpen} 
         onClose={() => setIsDrawerOpen(false)} 
-        projectName={projectName} 
-        projectId={projectId} 
+        projectName={projectName}  
         endpoints={endpoints} 
       />
     </>
