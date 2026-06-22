@@ -1,72 +1,91 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { Alert, mockAlerts } from "@/data/mock-data";
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
 
-// We extend your base Alert to include a status
-export interface StatefulAlert extends Alert {
+export interface StatefulAlert {
+  id: string;
+  project: string;
+  issue: string;
+  path: string;
+  details: string;
+  time: string;
+  type: "critical" | "warning";
   status: "active" | "resolved";
   resolvedAt?: string;
 }
 
 interface AlertContextType {
   alerts: StatefulAlert[];
-  resolveAlert: (id: string) => void;
-  resolveAll: () => void;
+  refreshAlerts: () => Promise<void>;
+  resolveAlert: (id: string) => Promise<void>;
+  resolveAll: () => Promise<void>;
 }
 
 const AlertContext = createContext<AlertContextType | undefined>(undefined);
 
 export function AlertProvider({ children }: { children: ReactNode }) {
-  // Initialize alerts with "active" status
   const [alerts, setAlerts] = useState<StatefulAlert[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
 
-  useEffect(() => {
-    // Load from mock data on first boot
-    const initialAlerts = mockAlerts.map(a => ({ ...a, status: "active" as const }));
-    setAlerts(initialAlerts);
-    setIsLoaded(true);
+  // Function to fetch real data from your Fastify backend
+  const refreshAlerts = useCallback(async () => {
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
 
-    // WOW FACTOR: Simulate a brand new alert coming in every 45 seconds!
-    const simulator = setInterval(() => {
-      const randomIssues = ["DNS Resolution Failed", "CORS Error", "Unexpected 502 Gateway", "Latency Spike (>3000ms)"];
-      const newAlert: StatefulAlert = {
-        id: Date.now().toString(),
-        project: "Production API",
-        issue: randomIssues[Math.floor(Math.random() * randomIssues.length)],
-        path: "/api/core/sync",
-        details: "Automatically detected by Global Monitor",
-        time: "Just now",
-        type: Math.random() > 0.5 ? "critical" : "warning",
-        status: "active"
-      };
-      setAlerts(prev => [newAlert, ...prev]);
-    }, 45000);
-
-    return () => clearInterval(simulator);
+      const response = await fetch(`${API_URL}/alerts`, {
+        headers: { "x-api-key": API_KEY }
+      });
+      const json = await response.json();
+      
+      if (json.success) {
+        setAlerts(json.data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch real alerts from backend", error);
+    }
   }, []);
 
-  const resolveAlert = (id: string) => {
-    setAlerts(prev => prev.map(alert => 
-      alert.id === id 
-        ? { ...alert, status: "resolved", resolvedAt: new Date().toLocaleTimeString() } 
-        : alert
-    ));
+  // Initial load and real-time polling (every 10 seconds)
+  useEffect(() => {
+    refreshAlerts();
+    const interval = setInterval(refreshAlerts, 10000);
+    return () => clearInterval(interval);
+  }, [refreshAlerts]);
+
+  // Real API call to resolve a single alert
+  const resolveAlert = async (id: string) => {
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
+
+      await fetch(`${API_URL}/alerts/${id}/resolve`, {
+        method: "PATCH",
+        headers: { "x-api-key": API_KEY }
+      });
+      await refreshAlerts();
+    } catch (error) {
+      console.error("Failed to resolve alert", error);
+    }
   };
 
-  const resolveAll = () => {
-    setAlerts(prev => prev.map(alert => 
-      alert.status === "active" 
-        ? { ...alert, status: "resolved", resolvedAt: new Date().toLocaleTimeString() } 
-        : alert
-    ));
-  };
+  // Real API call to resolve all active alerts
+  const resolveAll = async () => {
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
 
-  if (!isLoaded) return null;
+      await fetch(`${API_URL}/alerts/resolve-all`, {
+        method: "PATCH",
+        headers: { "x-api-key": API_KEY }
+      });
+      await refreshAlerts();
+    } catch (error) {
+      console.error("Failed to resolve all alerts", error);
+    }
+  };
 
   return (
-    <AlertContext.Provider value={{ alerts, resolveAlert, resolveAll }}>
+    <AlertContext.Provider value={{ alerts, refreshAlerts, resolveAlert, resolveAll }}>
       {children}
     </AlertContext.Provider>
   );

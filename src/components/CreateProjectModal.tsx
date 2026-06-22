@@ -11,7 +11,8 @@ export interface CreateProjectData {
 interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (data: CreateProjectData) => void;
+  // Updated to support Promises so we can wait for the backend
+  onCreate: (data: CreateProjectData) => Promise<void> | void; 
 }
 
 export default function CreateProjectModal({ isOpen, onClose, onCreate }: CreateProjectModalProps) {
@@ -35,17 +36,20 @@ export default function CreateProjectModal({ isOpen, onClose, onCreate }: Create
 
   if (!isOpen) return null;
 
-  const handleCreate = () => {
+  // --- REAL ASYNC CREATE ENGINE ---
+  const handleCreate = async () => {
     if (!name.trim()) return;
     setIsSubmitting(true);
     
-    const delay = url.trim() ? 1500 : 400;
-    
-    setTimeout(() => {
-      onCreate({ name, url });
+    try {
+      // Await the actual database creation and Swagger import!
+      await onCreate({ name, url });
+    } catch (error) {
+      console.error("Failed to create project:", error);
+    } finally {
       setIsSubmitting(false);
       onClose();
-    }, delay);
+    }
   };
 
   return (

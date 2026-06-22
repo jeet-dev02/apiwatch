@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import NavigationWrapper from "@/components/NavigationWrapper"; 
 
-// 1. IMPORT BOTH PROVIDERS HERE
 import { ProjectProvider } from "@/context/ProjectContext";
 import { AlertProvider } from "@/context/AlertContext";
+import { NavigationProvider } from "@/context/NavigationContext";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -33,17 +34,19 @@ export default function RootLayout({
           margin: 0,
         }}
       >
-        {/* 2. WRAP EVERYTHING IN THE PROVIDERS */}
-        <ProjectProvider>
-          <AlertProvider>
-            
-            <Sidebar />
-            <main style={{ marginLeft: 220, minHeight: "100vh" }}>
-              {children}
-            </main>
+        <NavigationProvider>
+          <ProjectProvider>
+            <AlertProvider>
+              
+              <Sidebar />
+             
+              <NavigationWrapper>
+                {children}
+              </NavigationWrapper>
 
-          </AlertProvider>
-        </ProjectProvider>
+            </AlertProvider>
+          </ProjectProvider>
+        </NavigationProvider>
       </body>
     </html>
   );

@@ -7,7 +7,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 export interface Header { key: string; value: string; }
 
 export interface Endpoint {
-  id: number | "new";
+  id: string | "new"; // Updated to string to support backend Prisma CUIDs
   method: HttpMethod;
   path: string;
   url: string;
@@ -22,32 +22,23 @@ export interface Endpoint {
 export type ProjectData = {
   id: string;
   title: string;
+  slug?: string;
+  healthScore?: number;
   endpoints: Endpoint[]; 
 };
-
-// --- Default Mock Data (Used for template projects) ---
-const defaultEndpoints: Endpoint[] = [
-  { id: 1, method: "GET", path: "/api/users/me", url: "https://api.myapp.com/api/users/me", authType: "Bearer Token (JWT)", token: "jwt...", headers: [], body: "", expectedStatus: "200", maxResponseTime: "500" },
-  { id: 2, method: "POST", path: "/api/auth/login", url: "https://api.myapp.com/api/auth/login", authType: "None", token: "", headers: [{ key: "Content-Type", value: "application/json" }], body: '{\n  "email": "test"\n}', expectedStatus: "200", maxResponseTime: "800" },
-  { id: 3, method: "GET", path: "/api/products", url: "https://api.myapp.com/api/products", authType: "None", token: "", headers: [], body: "", expectedStatus: "200", maxResponseTime: "400" },
-];
-
-const initialProjectList: ProjectData[] = [
-  { id: "1", title: "Project 1 Dashboard", endpoints: defaultEndpoints },
-  { id: "2", title: "Project 2 Dashboard", endpoints: defaultEndpoints },
-  { id: "3", title: "Project 3 Dashboard", endpoints: defaultEndpoints },
-  { id: "4", title: "Project 4 Dashboard", endpoints: defaultEndpoints },
-  { id: "5", title: "Project 5 Dashboard", endpoints: defaultEndpoints },
-  { id: "6", title: "Project 6 Dashboard", endpoints: defaultEndpoints },
-  { id: "7", title: "Project 7 Dashboard", endpoints: defaultEndpoints },
-];
 
 // --- Context Definition ---
 interface ProjectContextType {
   projects: ProjectData[];
-  addProject: (name: string, swaggerUrl?: string) => void; // Removed env
-  removeProject: (id: string) => void;
+  addProject: (name: string, swaggerUrl?: string) => Promise<void>;
+  removeProject: (id: string) => Promise<void>;
   updateProjectEndpoints: (projectId: string, endpoints: Endpoint[]) => void;
+  refreshProjects: () => Promise<void>; // Added so we can force a re-fetch if needed
+  addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
+  updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<boolean>; // Updated to return boolean
+  importSwagger: (projectId: string, swaggerUrl: string) => Promise<void>; // Added for Swagger import
+  testEndpoint: (projectId: string, endpointId: string) => Promise<any>; // Added for Live Testing
+  runAllTests: (projectId: string) => Promise<string | null>; // NEW: Added for full suite testing
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
@@ -56,61 +47,240 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<ProjectData[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // 1. On Initial Load: Check Local Storage
-  useEffect(() => {
-    const saved = localStorage.getItem("apiwatch_projects_v2"); 
-    if (saved) {
-      setProjects(JSON.parse(saved));
-    } else {
-      setProjects(initialProjectList);
-      localStorage.setItem("apiwatch_projects_v2", JSON.stringify(initialProjectList));
-    }
-    setIsLoaded(true);
-  }, []);
+  // Securely grab environment variables
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+  const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
 
-  // 2. On Any Change: Save to Local Storage
-  useEffect(() => {
-    if (isLoaded) {
-      localStorage.setItem("apiwatch_projects_v2", JSON.stringify(projects));
+  // 1. Fetch all projects and their endpoints from Fastify on load
+  const fetchProjects = async () => {
+    try {
+      const response = await fetch(`${API_URL}/projects`, {
+        headers: {
+          "x-api-key": API_KEY
+        }
+      });
+      const json = await response.json();
+      
+      if (json.success) {
+        setProjects(json.data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch projects from backend:", error);
+    } finally {
+      setIsLoaded(true);
     }
-  }, [projects, isLoaded]);
+  };
+
+  useEffect(() => {
+    fetchProjects();
+  }, []);
 
   // --- Actions ---
 
-  const addProject = (name: string, swaggerUrl?: string) => { 
-    let startingEndpoints: Endpoint[] = [];
+  // 2. Create a new project in the Postgres database
+  const addProject = async (name: string, swaggerUrl?: string) => { 
+    try {
+      // Create the empty project
+      const response = await fetch(`${API_URL}/projects`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-api-key": API_KEY 
+        },
+        body: JSON.stringify({ title: name })
+      });
+      const json = await response.json();
 
-    // SIMULATE SWAGGER/OPENAPI IMPORT
-    if (swaggerUrl && swaggerUrl.trim() !== "") {
-      startingEndpoints = [
-        { id: Date.now() + 1, method: "GET", path: "/api/users", url: "https://api.example.com/api/users", authType: "Bearer Token (JWT)", token: "", headers: [{ key: "Accept", value: "application/json" }], body: "", expectedStatus: "200", maxResponseTime: "500" },
-        { id: Date.now() + 2, method: "POST", path: "/api/users", url: "https://api.example.com/api/users", authType: "Bearer Token (JWT)", token: "", headers: [{ key: "Content-Type", value: "application/json" }], body: '{\n  "name": "string",\n  "email": "user@example.com"\n}', expectedStatus: "201", maxResponseTime: "800" },
-        { id: Date.now() + 3, method: "GET", path: "/health", url: "https://api.example.com/health", authType: "None", token: "", headers: [], body: "", expectedStatus: "200", maxResponseTime: "200" },
-      ];
+      if (json.success) {
+        const newProject = json.data;
+        
+        // Add the empty project to the UI immediately so it feels fast
+        setProjects((prev) => [newProject, ...prev]);
+
+        // If provided a Swagger URL, automatically import the APIs!
+        if (swaggerUrl && swaggerUrl.trim() !== "") {
+          try {
+            await importSwagger(newProject.id, swaggerUrl.trim());
+          } catch (importError) {
+            console.error("Swagger import failed during project creation", importError);
+            alert("Project was created, but we couldn't import the Swagger URL. You can try again from the API Manager.");
+          }
+        }
+      } else {
+        alert(`Failed to create project: ${json.error}`);
+      }
+    } catch (error) {
+      console.error("Error creating project:", error);
     }
-
-    const newProject: ProjectData = { 
-      id: Date.now().toString(), 
-      title: name, 
-      endpoints: startingEndpoints 
-    };
-    
-    setProjects((prev) => [newProject, ...prev]);
   };
 
-  const removeProject = (id: string) => {
-    setProjects((prev) => prev.filter((project) => project.id !== id));
+  // 3. Delete a project from the Postgres database
+  const removeProject = async (id: string) => {
+    try {
+      const response = await fetch(`${API_URL}/projects/${id}`, { 
+        method: "DELETE",
+        headers: {
+          "x-api-key": API_KEY
+        }
+      });
+      const json = await response.json();
+
+      if (json.success) {
+        setProjects((prev) => prev.filter((project) => project.id !== id));
+      }
+    } catch (error) {
+      console.error("Error deleting project:", error);
+    }
   };
 
+  // 4. Temporarily keeping this local for UI stability
   const updateProjectEndpoints = (projectId: string, newEndpoints: Endpoint[]) => {
     setProjects((prev) => prev.map((p) => p.id === projectId ? { ...p, endpoints: newEndpoints } : p));
+  };
+
+  // 5. Create an endpoint in the Postgres database
+  const addEndpoint = async (projectId: string, endpointData: Endpoint) => {
+    try {
+      // Force Zod-compliant formatting
+      const payload = {
+        ...endpointData,
+        maxResponseTime: String(endpointData.maxResponseTime) 
+      };
+
+      const response = await fetch(`${API_URL}/projects/${projectId}/endpoints`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-api-key": API_KEY 
+        },
+        body: JSON.stringify(payload)
+      });
+      const json = await response.json();
+
+      if (json.success) {
+        setProjects((prev) => prev.map(p => 
+          p.id === projectId 
+            ? { ...p, endpoints: [...p.endpoints, json.data] } 
+            : p
+        ));
+      } else {
+        alert(`Failed to save endpoint: ${JSON.stringify(json.error)}`);
+      }
+    } catch (error) {
+      console.error("Error saving endpoint:", error);
+    }
+  };
+
+  // 6. Update an existing endpoint in the Postgres database
+  const updateEndpoint = async (projectId: string, endpointData: Endpoint) => {
+    try {
+      // Force Zod-compliant formatting
+      const payload = {
+        ...endpointData,
+        maxResponseTime: String(endpointData.maxResponseTime)
+      };
+
+      const response = await fetch(`${API_URL}/projects/${projectId}/endpoints/${endpointData.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
+        body: JSON.stringify(payload)
+      });
+      const json = await response.json();
+
+      if (json.success) {
+        setProjects((prev) => prev.map(p => 
+          p.id === projectId 
+            ? { ...p, endpoints: p.endpoints.map(ep => ep.id === endpointData.id ? json.data : ep) } 
+            : p
+        ));
+        return true; 
+      } else {
+        const errorMsg = typeof json.error === 'object' ? JSON.stringify(json.error) : json.error;
+        alert(`Failed to update endpoint: ${errorMsg}`);
+        return false; 
+      }
+    } catch (error) {
+      console.error("Error updating endpoint:", error);
+      return false;
+    }
+  };
+
+  // NEW: Trigger a live test
+  const testEndpoint = async (projectId: string, endpointId: string) => {
+    const response = await fetch(`${API_URL}/projects/${projectId}/endpoints/${endpointId}/test`, {
+      method: "POST",
+      headers: { "x-api-key": API_KEY }
+    });
+    return await response.json();
+  };
+
+  // 7. Trigger the backend Swagger parser
+  const importSwagger = async (projectId: string, swaggerUrl: string) => {
+    try {
+      const response = await fetch(`${API_URL}/projects/${projectId}/import-swagger`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-api-key": API_KEY 
+        },
+        body: JSON.stringify({ swaggerUrl })
+      });
+      const json = await response.json();
+
+      if (json.success) {
+        // The backend returns the full, updated list of endpoints. Overwrite local state with it.
+        setProjects((prev) => prev.map(p => 
+          p.id === projectId 
+            ? { ...p, endpoints: json.data } 
+            : p
+        ));
+      } else {
+        alert(`Import failed: ${json.error}`);
+        throw new Error(json.error);
+      }
+    } catch (error) {
+      console.error("Error importing swagger:", error);
+      throw error; 
+    }
+  };
+
+  // NEW: Trigger the full project test suite
+  const runAllTests = async (projectId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/projects/${projectId}/run-all`, {
+        method: "POST",
+        headers: { "x-api-key": API_KEY }
+      });
+      const json = await response.json();
+      
+      if (json.success) {
+        return json.testRunId; // Return the ID so the UI can start polling
+      } else {
+        alert(`Failed to start suite: ${json.error}`);
+        return null;
+      }
+    } catch (error) {
+      console.error("Error triggering test suite:", error);
+      return null;
+    }
   };
 
   // Prevent UI flashing during hydration
   if (!isLoaded) return null;
 
   return (
-    <ProjectContext.Provider value={{ projects, addProject, removeProject, updateProjectEndpoints }}>
+    <ProjectContext.Provider value={{ 
+      projects, 
+      addProject, 
+      removeProject, 
+      updateProjectEndpoints, 
+      refreshProjects: fetchProjects,
+      addEndpoint,       
+      updateEndpoint,
+      importSwagger,
+      testEndpoint,
+      runAllTests // NEW: Exported!
+    }}>
       {children}
     </ProjectContext.Provider>
   );

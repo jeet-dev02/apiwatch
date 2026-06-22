@@ -6,20 +6,42 @@ import { useProjects } from "@/context/ProjectContext";
 import ProjectGridCard from "@/components/ProjectGridCard";
 import CreateProjectGhostCard from "@/components/CreateProjectGhostCard";
 import CreateProjectModal, { CreateProjectData } from "@/components/CreateProjectModal";
-import GlobalRunnerModal from "@/components/GlobalRunnerModal"; // ADDED: Import the runner
+import GlobalRunnerModal from "@/components/GlobalRunnerModal";
+import { useNavigation } from "@/context/NavigationContext";
+
 
 export default function ProjectsPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [runnerProjectId, setRunnerProjectId] = useState<string | null>(null); // ADDED: Track which project is running
+  const [isPreparingModal, setIsPreparingModal] = useState(false); // ✨ NEW STATE for spinner
+  const [runnerProjectId, setRunnerProjectId] = useState<string | null>(null); 
   
   const { projects, addProject } = useProjects();
 
   const handleCreateNewProject = (data: CreateProjectData) => {
     addProject(data.name, data.url); 
   };
+  const { startNavigation, stopNavigation } = useNavigation();
+  
+  const handleOpenCreateModal = () => {
+    setIsPreparingModal(true);
+    startNavigation("create-modal"); // ✨ Instantly lock the sidebar and the rest of the app
+    
+    setTimeout(() => {
+      setIsCreateModalOpen(true);
+      setIsPreparingModal(false);
+      stopNavigation(); // ✨ Instantly unlock the app the second the modal appears
+    }, 400); 
+  };
   
   return (
-    <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
+    // ✨ The Invisible Shield applied here as well
+    <div style={{ 
+      padding: 24, 
+      maxWidth: 1400, 
+      margin: "0 auto",
+      pointerEvents: isPreparingModal ? "none" : "auto",
+      transition: "opacity 0.2s ease"
+    }}>
       
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: "#111827", margin: 0 }}>Projects</h1>
@@ -28,8 +50,9 @@ export default function ProjectsPage() {
 
       <div style={{ display: "grid", gap: 24 }} className="grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
         
-        <div onClick={() => setIsCreateModalOpen(true)}>
-          <CreateProjectGhostCard />
+        {/* ✨ Trigger the lock and pass loading state */}
+        <div onClick={handleOpenCreateModal}>
+          <CreateProjectGhostCard isLoading={isPreparingModal} />
         </div>
 
         {projects.map((card) => (
@@ -38,7 +61,6 @@ export default function ProjectsPage() {
             projectId={card.id} 
             title={card.title} 
             endpoints={card.endpoints}
-            
           />
         ))}
 
@@ -50,7 +72,6 @@ export default function ProjectsPage() {
         onCreate={handleCreateNewProject}
       />
       
-      {/* ADDED: The Global Runner Modal, configured to skip selection */}
       <GlobalRunnerModal 
         isOpen={!!runnerProjectId} 
         onClose={() => setRunnerProjectId(null)} 

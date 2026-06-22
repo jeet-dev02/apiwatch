@@ -13,86 +13,87 @@ interface GlobalRunnerModalProps {
 
 export default function GlobalRunnerModal({ isOpen, onClose, preSelectedProjectId }: GlobalRunnerModalProps) {
   const router = useRouter();
-  const { projects } = useProjects();
+  
+  // 1. IMPORT REAL BACKEND TRIGGER: runAllTests
+  const { projects, runAllTests } = useProjects();
   
   const [phase, setPhase] = useState<"select" | "scanning" | "complete">("select");
   const [progress, setProgress] = useState(0);
   const [currentLog, setCurrentLog] = useState("");
 
-  // Using refs ensures the timers don't cause memory leaks or skip animations
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize the correct phase when opened
   useEffect(() => {
     if (isOpen) {
       if (preSelectedProjectId) {
-        // Triggered from "Check Health" - Start scan immediately
         startScan(preSelectedProjectId);
       } else {
-        // Triggered from "Quick Actions" - Wait for user to select
         setPhase("select");
         setProgress(0);
       }
     } else {
-      // Cleanup timers when modal closes
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     }
-    // FIXED: Tell Vercel to safely ignore the missing 'startScan' dependency here
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, preSelectedProjectId]);
 
-  // The unified scan engine that works for BOTH triggers
-  const startScan = (projectIdToScan: string) => {
+  // 2. THE REAL SCAN ENGINE
+  const startScan = async (projectIdToScan: string) => {
     setPhase("scanning");
     setProgress(0);
     setCurrentLog("Initializing deep diagnostic engine...");
 
+    // A. Fire the real backend API call immediately
+    const testRunId = await runAllTests(projectIdToScan);
+
+    if (!testRunId) {
+        alert("Failed to start the test suite. Check your backend connection.");
+        onClose();
+        return;
+    }
+
+    // B. Run a rapid, cosmetic UI animation for the "Terminal" feel
+    // since the backend queues the job instantly.
     const logs = [
-      "Resolving DNS and establishing secure connection...",
-      "Validating Bearer Tokens (JWT)... OK",
-      "Asserting expected JSON schemas for GET routes...",
-      "Simulating high-load POST requests...",
-      "Measuring latency against 500ms threshold...",
-      "Finalizing assertions and generating report..."
+      "Establishing secure connection to queue...",
+      "Compiling 10-ping burst payload...",
+      "Handing off to background worker...",
+      "Job queued successfully!"
     ];
 
     let step = 0;
-
-    // Clear any stuck intervals
     if (intervalRef.current) clearInterval(intervalRef.current);
 
     intervalRef.current = setInterval(() => {
       setProgress((prev) => {
-        const next = prev + 15;
+        const next = prev + 25; // Fills up quickly (4 ticks)
         
-        // When progress hits 100%
         if (next >= 100) {
           if (intervalRef.current) clearInterval(intervalRef.current);
           setPhase("complete");
           
-          // The Handoff: Route strictly to the selected project's test-runs
+          // C. Handoff to the real-time polling page
           timeoutRef.current = setTimeout(() => {
             const project = projects.find(p => p.id === projectIdToScan);
             if (project) {
               const slug = project.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
               router.push(`/${slug}/test-runs`);
             }
-            onClose(); // Close modal after successful routing
-          }, 1500);
+            onClose(); 
+          }, 1000);
           
           return 100;
         }
         
-        // Keep flashing logs
         if (step < logs.length) {
           setCurrentLog(logs[step]);
           step++;
         }
         return next;
       });
-    }, 400); // 400ms per simulated step
+    }, 300); 
   };
 
   if (!isOpen) return null;
@@ -126,7 +127,6 @@ export default function GlobalRunnerModal({ isOpen, onClose, preSelectedProjectI
                 projects.map(p => (
                   <button 
                     key={p.id} 
-                    // Pass the ID directly into the function so it doesn't get lost!
                     onClick={() => startScan(p.id)}
                     style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "16px", backgroundColor: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 8, cursor: "pointer", transition: "all 0.2s", textAlign: "left" }}
                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#2563eb"; e.currentTarget.style.backgroundColor = "#eff6ff"; }}
@@ -152,10 +152,10 @@ export default function GlobalRunnerModal({ isOpen, onClose, preSelectedProjectI
             </div>
             
             <h2 style={{ margin: "0 0 8px 0", fontSize: 20, fontWeight: 700, color: "#f9fafb" }}>
-              {phase === "complete" ? "Diagnostic Complete" : "Running Deep Scan"}
+              {phase === "complete" ? "Diagnostic Queued" : "Running Deep Scan"}
             </h2>
             <p style={{ margin: 0, fontSize: 14, color: "#9ca3af", height: 20 }}>
-              {phase === "complete" ? "Redirecting to test run results..." : currentLog}
+              {phase === "complete" ? "Redirecting to live results..." : currentLog}
             </p>
 
             <div style={{ width: "100%", height: 6, backgroundColor: "#374151", borderRadius: 3, marginTop: 32, overflow: "hidden" }}>

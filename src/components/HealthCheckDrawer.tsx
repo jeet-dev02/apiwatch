@@ -1,7 +1,7 @@
 "use client";
 
 import { X, Play, Activity, ServerCrash } from "lucide-react";
-import { Endpoint, HttpMethod } from "@/context/ProjectContext";
+import { Endpoint, HttpMethod, useProjects } from "@/context/ProjectContext";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -9,7 +9,6 @@ interface HealthCheckDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   projectName: string;
-  // FIXED: Removed projectId from here since it's never used!
   endpoints: Endpoint[];
 }
 
@@ -18,9 +17,10 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
   const [isRunning, setIsRunning] = useState(false);
   const projectSlug = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 
+  const { projects, runAllTests } = useProjects();
+
   if (!isOpen) return null;
 
-  // Helper for badge colors
   const getMethodColor = (method: HttpMethod) => {
     switch (method) {
       case "GET": return { bg: "#eff6ff", text: "#2563eb", border: "#bfdbfe" };
@@ -31,14 +31,19 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
     }
   };
 
-  const handleRunSuite = () => {
+  const handleRunSuite = async () => {
+    const currentProject = projects.find(p => p.title === projectName);
+    if (!currentProject) return;
+
     setIsRunning(true);
-    // Simulate initialization, then route the user directly to the test-runs page
-    setTimeout(() => {
-      setIsRunning(false);
+    const testRunId = await runAllTests(currentProject.id);
+    setIsRunning(false);
+
+    if (testRunId) {
       onClose();
-      router.push(`/${projectSlug}/test-runs`);
-    }, 800);
+      // ✨ THE FIX: Append ?activeRun=true to the URL
+      router.push(`/${projectSlug}/test-runs?activeRun=true`); 
+    }
   };
 
   return (
@@ -63,7 +68,6 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
         {/* Scrollable Body List */}
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
           {endpoints.length === 0 ? (
-            /* Fail-safe Empty State */
             <div style={{ textAlign: "center", marginTop: 40 }}>
               <div style={{ width: 48, height: 48, backgroundColor: "#f3f4f6", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
                 <ServerCrash size={24} color="#9ca3af" />
@@ -72,7 +76,6 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
               <p style={{ fontSize: 14, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>Please configure APIs via the Manage APIs page before running a suite.</p>
             </div>
           ) : (
-            /* Populated Endpoints List */
             <div>
               <h3 style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 16px 0" }}>
                 Queued for Testing ({endpoints.length})
