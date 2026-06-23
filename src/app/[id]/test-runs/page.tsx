@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { ArrowLeft, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Terminal } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useProjects } from "@/context/ProjectContext";
 import OverallPerformanceChart from "@/components/OverallPerformanceChart"; 
 import PageSkeleton from "@/components/ui/PageSkeleton"; 
@@ -68,9 +68,6 @@ const DiagnosticTerminal = () => {
   ];
 
   useEffect(() => {
-    // ✨ THE FIX: We slow the interval to 350ms and only add 1% or 2% at a time.
-    // This perfectly stretches the 1-99% climb across roughly 20-25 seconds,
-    // giving each text phase exactly equal screen time.
     const interval = setInterval(() => {
       setProgress((p) => {
         const next = p + Math.floor(Math.random() * 2) + 1;
@@ -135,10 +132,9 @@ const DiagnosticTerminal = () => {
   );
 };
 
-export default function TestRunsPage() {
+function TestRunsContent() {
   const params = useParams();
   const searchParams = useSearchParams(); 
-  const router = useRouter(); 
   const projectSlugFromUrl = params.id as string;
   
   const { projects, runAllTests } = useProjects();
@@ -149,8 +145,7 @@ export default function TestRunsPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  // Read the special active run tag directly from the routing event
-  const [forceHollywoodDelay, setForceHollywoodDelay] = useState(searchParams.get("activeRun") === "true");
+  const [forceHollywoodDelay, setForceHollywoodDelay] = useState(searchParams?.get("activeRun") === "true");
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
   const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
@@ -160,12 +155,11 @@ export default function TestRunsPage() {
       const timer = setTimeout(() => {
         setForceHollywoodDelay(false);
         window.history.replaceState(null, '', `/${projectSlugFromUrl}/test-runs`);
-      }, 3500); // We leave the 3.5s minimum alone, it just ensures the box doesn't flash too fast if the DB is instant.
+      }, 3500); 
       return () => clearTimeout(timer);
     }
   }, [forceHollywoodDelay, projectSlugFromUrl]);
 
-  // --- Real-time Polling Engine ---
   useEffect(() => {
     if (!currentProject) return;
     let pollInterval: NodeJS.Timeout;
@@ -211,12 +205,10 @@ export default function TestRunsPage() {
     return <PageSkeleton />;
   }
 
-  // Safe-guard project loading, but bypass skeleton loading if it's an active suite run!
   if (isInitialLoad && !forceHollywoodDelay) {
     return <PageSkeleton />;
   }
 
-  // --- Dynamic Data Derivation ---
   const latestRun = testRuns.length > 0 ? testRuns[0] : null;
   const results = latestRun?.results || [];
 
@@ -253,7 +245,6 @@ export default function TestRunsPage() {
     <div style={{ minHeight: "100vh", backgroundColor: "#f9fafb", padding: "32px 24px", fontFamily: "sans-serif" }}>
       <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
         
-        {/* ✨ Full Screen Terminal Interceptor */}
         {displayAsRunning && <DiagnosticTerminal />}
 
         {/* ── 1. Header Section ─────────────────────────────────────────── */}
@@ -506,5 +497,14 @@ export default function TestRunsPage() {
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       `}} />
     </div>
+  );
+}
+
+// ✨ THE FIX: We wrap the entire content component in a Suspense boundary
+export default function TestRunsPage() {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <TestRunsContent />
+    </Suspense>
   );
 }
