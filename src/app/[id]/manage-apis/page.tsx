@@ -219,11 +219,23 @@ export default function ApiManagerPage() {
     setTimeout(() => setSaveStatus("idle"), 2000);
   };
 
-  const executeImport = async () => {
+ const executeImport = async () => {
     if (!importUrl.trim()) return;
     setIsImporting(true);
+    
     try {
-      await importSwagger(currentProject.id, importUrl.trim());
+      let autoExtractedBaseUrl = "";
+      
+      //  Extract the root domain just like the modal does
+      try {
+        const parsedUrl = new URL(importUrl.trim());
+        autoExtractedBaseUrl = parsedUrl.origin;
+      } catch (e) {
+        console.warn("Could not parse URL origin, proceeding with default backend logic.");
+      }
+
+      await importSwagger(currentProject.id, importUrl.trim(), autoExtractedBaseUrl);
+      
       setIsImporting(false);
       setShowImportBox(false);
       setImportUrl("");

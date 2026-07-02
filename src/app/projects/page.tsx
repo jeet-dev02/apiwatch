@@ -12,13 +12,13 @@ import { useNavigation } from "@/context/NavigationContext";
 
 export default function ProjectsPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [isPreparingModal, setIsPreparingModal] = useState(false); // ✨ NEW STATE for spinner
+  const [isPreparingModal, setIsPreparingModal] = useState(false); // 
   const [runnerProjectId, setRunnerProjectId] = useState<string | null>(null); 
   
   const { projects, addProject } = useProjects();
 
-  const handleCreateNewProject = (data: CreateProjectData) => {
-    addProject(data.name, data.url); 
+  const handleCreateNewProject = async (data: CreateProjectData) => {
+    await addProject(data.name, data.url, data.baseUrlOverride);
   };
   const { startNavigation, stopNavigation } = useNavigation();
   

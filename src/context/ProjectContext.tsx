@@ -7,7 +7,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 export interface Header { key: string; value: string; }
 
 export interface Endpoint {
-  id: string | "new"; // Updated to string to support backend Prisma CUIDs
+  id: string | "new";
   method: HttpMethod;
   path: string;
   url: string;
@@ -30,15 +30,17 @@ export type ProjectData = {
 // --- Context Definition ---
 interface ProjectContextType {
   projects: ProjectData[];
-  addProject: (name: string, swaggerUrl?: string) => Promise<void>;
+  // 1. Updated interface to accept baseUrlOverride
+  addProject: (name: string, swaggerUrl?: string, baseUrlOverride?: string) => Promise<void>;
   removeProject: (id: string) => Promise<void>;
   updateProjectEndpoints: (projectId: string, endpoints: Endpoint[]) => void;
-  refreshProjects: () => Promise<void>; // Added so we can force a re-fetch if needed
+  refreshProjects: () => Promise<void>;
   addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
-  updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<boolean>; // Updated to return boolean
-  importSwagger: (projectId: string, swaggerUrl: string) => Promise<void>; // Added for Swagger import
-  testEndpoint: (projectId: string, endpointId: string) => Promise<any>; // Added for Live Testing
-  runAllTests: (projectId: string) => Promise<string | null>; // NEW: Added for full suite testing
+  updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<boolean>;
+  // 2. Updated importSwagger to accept baseUrlOverride
+  importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
+  testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
+  runAllTests: (projectId: string) => Promise<string | null>;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
@@ -47,11 +49,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<ProjectData[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Securely grab environment variables
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
   const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
 
-  // 1. Fetch all projects and their endpoints from Fastify on load
   const fetchProjects = async () => {
     try {
       const response = await fetch(`${API_URL}/projects`, {
@@ -75,12 +75,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     fetchProjects();
   }, []);
 
-  // --- Actions ---
-
-  // 2. Create a new project in the Postgres database
-  const addProject = async (name: string, swaggerUrl?: string) => { 
+  // 3. Updated function to accept baseUrlOverride
+  const addProject = async (name: string, swaggerUrl?: string, baseUrlOverride?: string) => { 
     try {
-      // Create the empty project
       const response = await fetch(`${API_URL}/projects`, {
         method: "POST",
         headers: { 
@@ -93,14 +90,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
       if (json.success) {
         const newProject = json.data;
-        
-        // Add the empty project to the UI immediately so it feels fast
         setProjects((prev) => [newProject, ...prev]);
 
-        // If provided a Swagger URL, automatically import the APIs!
         if (swaggerUrl && swaggerUrl.trim() !== "") {
           try {
-            await importSwagger(newProject.id, swaggerUrl.trim());
+            // 4. Pass the override down to the import function!
+            await importSwagger(newProject.id, swaggerUrl.trim(), baseUrlOverride);
           } catch (importError) {
             console.error("Swagger import failed during project creation", importError);
             alert("Project was created, but we couldn't import the Swagger URL. You can try again from the API Manager.");
@@ -114,7 +109,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // 3. Delete a project from the Postgres database
   const removeProject = async (id: string) => {
     try {
       const response = await fetch(`${API_URL}/projects/${id}`, { 
@@ -133,15 +127,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // 4. Temporarily keeping this local for UI stability
   const updateProjectEndpoints = (projectId: string, newEndpoints: Endpoint[]) => {
     setProjects((prev) => prev.map((p) => p.id === projectId ? { ...p, endpoints: newEndpoints } : p));
   };
 
-  // 5. Create an endpoint in the Postgres database
   const addEndpoint = async (projectId: string, endpointData: Endpoint) => {
     try {
-      // Force Zod-compliant formatting
       const payload = {
         ...endpointData,
         maxResponseTime: String(endpointData.maxResponseTime) 
@@ -171,10 +162,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // 6. Update an existing endpoint in the Postgres database
   const updateEndpoint = async (projectId: string, endpointData: Endpoint) => {
     try {
-      // Force Zod-compliant formatting
       const payload = {
         ...endpointData,
         maxResponseTime: String(endpointData.maxResponseTime)
@@ -205,7 +194,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // NEW: Trigger a live test
   const testEndpoint = async (projectId: string, endpointId: string) => {
     const response = await fetch(`${API_URL}/projects/${projectId}/endpoints/${endpointId}/test`, {
       method: "POST",
@@ -214,8 +202,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     return await response.json();
   };
 
-  // 7. Trigger the backend Swagger parser
-  const importSwagger = async (projectId: string, swaggerUrl: string) => {
+  // 5. Updated importSwagger to accept baseUrlOverride and send it to the backend
+  const importSwagger = async (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => {
     try {
       const response = await fetch(`${API_URL}/projects/${projectId}/import-swagger`, {
         method: "POST",
@@ -223,12 +211,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           "Content-Type": "application/json",
           "x-api-key": API_KEY 
         },
-        body: JSON.stringify({ swaggerUrl })
+        // 6. Send the override in the JSON body!
+        body: JSON.stringify({ swaggerUrl, baseUrlOverride })
       });
       const json = await response.json();
 
       if (json.success) {
-        // The backend returns the full, updated list of endpoints. Overwrite local state with it.
         setProjects((prev) => prev.map(p => 
           p.id === projectId 
             ? { ...p, endpoints: json.data } 
@@ -244,7 +232,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // NEW: Trigger the full project test suite
   const runAllTests = async (projectId: string) => {
     try {
       const response = await fetch(`${API_URL}/projects/${projectId}/run-all`, {
@@ -254,7 +241,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const json = await response.json();
       
       if (json.success) {
-        return json.testRunId; // Return the ID so the UI can start polling
+        return json.testRunId;
       } else {
         alert(`Failed to start suite: ${json.error}`);
         return null;
@@ -265,7 +252,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Prevent UI flashing during hydration
   if (!isLoaded) return null;
 
   return (
@@ -279,7 +265,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       updateEndpoint,
       importSwagger,
       testEndpoint,
-      runAllTests // NEW: Exported!
+      runAllTests 
     }}>
       {children}
     </ProjectContext.Provider>

@@ -6,12 +6,12 @@ import { useState, useEffect } from "react";
 export interface CreateProjectData {
   name: string;
   url: string;
+  baseUrlOverride?: string;
 }
 
 interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  // Updated to support Promises so we can wait for the backend
   onCreate: (data: CreateProjectData) => Promise<void> | void; 
 }
 
@@ -36,14 +36,30 @@ export default function CreateProjectModal({ isOpen, onClose, onCreate }: Create
 
   if (!isOpen) return null;
 
-  // --- REAL ASYNC CREATE ENGINE ---
   const handleCreate = async () => {
     if (!name.trim()) return;
     setIsSubmitting(true);
     
     try {
-      // Await the actual database creation and Swagger import!
-      await onCreate({ name, url });
+      let autoExtractedBaseUrl = "";
+      
+      //  Automatically extract the root domain from the Swagger URL
+      if (url.trim()) {
+        try {
+          const parsedUrl = new URL(url.trim());
+          autoExtractedBaseUrl = parsedUrl.origin; 
+        } catch (e) {
+          console.warn("Could not parse URL origin, proceeding with default backend logic.");
+        }
+      }
+
+      // Pass the extracted URL silently to the backend!
+      await onCreate({ 
+        name, 
+        url, 
+        baseUrlOverride: autoExtractedBaseUrl 
+      });
+
     } catch (error) {
       console.error("Failed to create project:", error);
     } finally {
@@ -75,7 +91,7 @@ export default function CreateProjectModal({ isOpen, onClose, onCreate }: Create
           </button>
         </div>
 
-        {/* Form Body */}
+        {/* Form Body (Back to exactly 2 inputs!) */}
         <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
           
           <div>
@@ -96,6 +112,7 @@ export default function CreateProjectModal({ isOpen, onClose, onCreate }: Create
             </div>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>If provided, we will automatically import your endpoints.</p>
           </div>
+
         </div>
 
         {/* Footer */}

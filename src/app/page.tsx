@@ -47,7 +47,7 @@ export default function Home() {
   }, []);
 
   const handleCreateNewProject = async (data: CreateProjectData) => {
-    await addProject(data.name, data.url); 
+    await addProject(data.name, data.url, data.baseUrlOverride);
   };
 
   // ✨ NEW FUNCTION: Triggers the spinner, locks the screen, then opens the modal
