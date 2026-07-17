@@ -15,6 +15,8 @@ export interface Endpoint {
   token: string;
   headers: Header[];
   body: string;
+  preRequestScript?: string;   
+  postResponseScript?: string; 
   expectedStatus: string;
   maxResponseTime: string;
 }
@@ -30,14 +32,12 @@ export type ProjectData = {
 // --- Context Definition ---
 interface ProjectContextType {
   projects: ProjectData[];
-  // 1. Updated interface to accept baseUrlOverride
   addProject: (name: string, swaggerUrl?: string, baseUrlOverride?: string) => Promise<void>;
   removeProject: (id: string) => Promise<void>;
   updateProjectEndpoints: (projectId: string, endpoints: Endpoint[]) => void;
   refreshProjects: () => Promise<void>;
   addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
   updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<boolean>;
-  // 2. Updated importSwagger to accept baseUrlOverride
   importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
   testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
   runAllTests: (projectId: string) => Promise<string | null>;
@@ -75,7 +75,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     fetchProjects();
   }, []);
 
-  // 3. Updated function to accept baseUrlOverride
   const addProject = async (name: string, swaggerUrl?: string, baseUrlOverride?: string) => { 
     try {
       const response = await fetch(`${API_URL}/projects`, {
@@ -94,7 +93,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
         if (swaggerUrl && swaggerUrl.trim() !== "") {
           try {
-            // 4. Pass the override down to the import function!
             await importSwagger(newProject.id, swaggerUrl.trim(), baseUrlOverride);
           } catch (importError) {
             console.error("Swagger import failed during project creation", importError);
@@ -202,7 +200,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     return await response.json();
   };
 
-  // 5. Updated importSwagger to accept baseUrlOverride and send it to the backend
   const importSwagger = async (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => {
     try {
       const response = await fetch(`${API_URL}/projects/${projectId}/import-swagger`, {
@@ -211,7 +208,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           "Content-Type": "application/json",
           "x-api-key": API_KEY 
         },
-        // 6. Send the override in the JSON body!
         body: JSON.stringify({ swaggerUrl, baseUrlOverride })
       });
       const json = await response.json();

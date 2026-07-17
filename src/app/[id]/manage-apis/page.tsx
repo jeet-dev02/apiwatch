@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation"; 
 import { useProjects, Endpoint, HttpMethod } from "@/context/ProjectContext";
 import PageSkeleton from "@/components/ui/PageSkeleton";
+import Editor from "@monaco-editor/react"; 
 
 const emptyEndpoint: Endpoint = {
   id: "new", 
@@ -16,6 +17,8 @@ const emptyEndpoint: Endpoint = {
   token: "", 
   headers: [{ key: "Content-Type", value: "application/json" }], 
   body: "", 
+  preRequestScript: "",   
+  postResponseScript: "", 
   expectedStatus: "200", 
   maxResponseTime: "1000",
 };
@@ -54,24 +57,20 @@ export default function ApiManagerPage() {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
 
-  // Sync global state to local sidebar automatically
   useEffect(() => {
     if (currentProject) {
       setEndpoints(currentProject.endpoints);
     }
   }, [currentProject?.endpoints]);
 
- 
   if (!currentProject) {
     return <PageSkeleton />;
   }
 
-  // --- SMART VALIDATION ENGINE ---
   const validateForm = () => {
     const errors = { url: "", auth: "", body: "" };
     let isValid = true;
 
-    // 1. Request Rules
     if (!formData.url.trim()) {
       errors.url = "URL is required";
       isValid = false;
@@ -92,14 +91,12 @@ export default function ApiManagerPage() {
       }
     }
 
-    // 2. Auth Rules (FIXED: Case-insensitive check for "None")
     const currentAuth = formData.authType ? formData.authType.toUpperCase() : "NONE";
     if (currentAuth !== "NONE" && !formData.token?.trim()) {
       errors.auth = `A valid token/key is required for ${formData.authType}`;
       isValid = false;
     }
 
-    // 3. Body Rules (Strict Method Checking)
     if (formData.method === "POST" || formData.method === "PUT") {
       if (!formData.body.trim()) {
         errors.body = `A JSON request body is required for ${formData.method} requests`;
@@ -115,12 +112,11 @@ export default function ApiManagerPage() {
 
   const { isValid, errors } = validateForm();
 
-  // --- Core Actions ---
   const handleSelect = (endpoint: Endpoint) => {
     setIsManualMode(false);
     setActiveId(endpoint.id);
     setFormData(endpoint);
-    setTestResult(null); // Clear old results when switching
+    setTestResult(null); 
     setActiveTab("Request");
   };
 
@@ -140,11 +136,8 @@ export default function ApiManagerPage() {
       });
 
       if (response.ok) {
-        // 1. Remove from local UI list
         const newEndpoints = endpoints.filter(ep => ep.id !== activeId);
         setEndpoints(newEndpoints);
-        
-        // 2. Switch to the next available endpoint, or show the blank "new" form
         if (newEndpoints.length > 0) {
           handleSelect(newEndpoints[0]);
         } else {
@@ -159,7 +152,6 @@ export default function ApiManagerPage() {
       setIsDeletingEndpoint(false);
     }
   };
-
 
   const handleAddNew = () => {
     setIsManualMode(true);
@@ -187,14 +179,12 @@ export default function ApiManagerPage() {
     setIsTesting(true);
     setTestResult(null);
 
-    // 1. Save changes to DB first
     const saveSuccess = await updateEndpoint(currentProject.id, formData);
     if (!saveSuccess) {
       setIsTesting(false);
       return; 
     }
 
-    // 2. Run the live test
     try {
       const result = await testEndpoint(currentProject.id, formData.id as string);
       if (result.success) {
@@ -225,8 +215,6 @@ export default function ApiManagerPage() {
     
     try {
       let autoExtractedBaseUrl = "";
-      
-      //  Extract the root domain just like the modal does
       try {
         const parsedUrl = new URL(importUrl.trim());
         autoExtractedBaseUrl = parsedUrl.origin;
@@ -278,7 +266,6 @@ export default function ApiManagerPage() {
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", backgroundColor: "#f9fafb" }}>
       
-      {/* ── Page Header ─────────────────────────────────────────── */}
       <div style={{ padding: "24px 32px", backgroundColor: "#ffffff", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 16 }}>
         <Link href="/projects" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: "50%", color: "#6b7280", backgroundColor: "#f3f4f6", transition: "all 0.2s", pointerEvents: (isTesting || isDeletingEndpoint) ? "none" : "auto", opacity: (isTesting || isDeletingEndpoint) ? 0.5 : 1 }} onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#e5e7eb"; e.currentTarget.style.color = "#111827"; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#f3f4f6"; e.currentTarget.style.color = "#6b7280"; }}>
             <ArrowLeft size={18} />
@@ -294,11 +281,8 @@ export default function ApiManagerPage() {
         </div>
       </div>
 
-      {/* ── Main Master-Detail Layout ───────────────────────────── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         
-        {/* ── LEFT PANE: The Roster ─────────────────────────────── */}
-        {/* ✨ UX LOCK: Freeze and fade sidebar during active backend operations */}
         <div style={{ width: 340, backgroundColor: "#ffffff", borderRight: "1px solid #e5e7eb", display: "flex", flexDirection: "column", zIndex: 10, transition: "opacity 0.2s", pointerEvents: (isTesting || isDeletingEndpoint) ? "none" : "auto", opacity: (isTesting || isDeletingEndpoint) ? 0.6 : 1 }}>
           <div style={{ padding: "16px 20px", borderBottom: "1px solid #f3f4f6", fontSize: 12, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>
             Configured Endpoints
@@ -339,7 +323,6 @@ export default function ApiManagerPage() {
           </div>
         </div>
 
-        {/* ── RIGHT PANE: ZERO STATE OR CONFIG FORM ──────────────── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: showZeroState ? "#f3f4f6" : "#ffffff", position: "relative" }}>
           
           {showZeroState ? (
@@ -388,13 +371,12 @@ export default function ApiManagerPage() {
               </div>
             </div>
           ) : (
-            /* --- THE STANDARD CONFIGURATION FORM --- */
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e5e7eb", paddingRight: 24 }}>
                 
-                {/* 🔴 NEW SMART TABS WITH ERROR INDICATORS 🔴 */}
+                {/* ✨ NEW TAB ADDED: "Scripts" */}
                 <div style={{ display: "flex", paddingLeft: 24 }}>
-                  {["Request", "Auth", "Headers", "Body", "Assertions"].map((tab) => {
+                  {["Request", "Auth", "Headers", "Body", "Scripts", "Assertions"].map((tab) => {
                     let hasError = false;
                     if (tab === "Request" && errors.url) hasError = true;
                     if (tab === "Auth" && errors.auth) hasError = true;
@@ -411,11 +393,9 @@ export default function ApiManagerPage() {
                 
               </div>
 
-              {/* Form Content Area */}
               <div style={{ flex: 1, padding: 32, overflowY: "auto", display: "flex", flexDirection: "column", pointerEvents: (isTesting || isDeletingEndpoint) ? "none" : "auto", opacity: (isTesting || isDeletingEndpoint) ? 0.7 : 1 }}>
                 <div style={{ maxWidth: 800, display: "flex", flexDirection: "column", gap: 32, flex: 1 }}>
                   
-                  {/* TAB 1: Request */}
                   {activeTab === "Request" && (
                     <div style={{ animation: "fadeIn 0.2s ease" }}>
                       <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 16px 0" }}>Request Coordinates</h3>
@@ -435,44 +415,37 @@ export default function ApiManagerPage() {
                     </div>
                   )}
 
-                  {/* TAB 2: Auth */}
-{activeTab === "Auth" && (
-  <div style={{ animation: "fadeIn 0.2s ease" }}>
-    <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 16px 0" }}>Authentication</h3>
-    <div style={{ display: "flex", gap: 16 }}>
-      
-      <div style={{ width: 200 }}>
-        <label style={{ fontSize: 13, fontWeight: 500, color: "#6b7280", marginBottom: 8, display: "block" }}>Auth type</label>
-        {/* ✨ THE FIX 1: Safely map the backend string to the dropdown option values */}
-        <select 
-          value={
-            formData.authType === "Bearer Token (JWT)" || formData.authType === "BEARER" ? "BEARER" : 
-            formData.authType === "API Key" || formData.authType === "API_KEY" ? "API_KEY" : 
-            "NONE"
-          } 
-          onChange={(e) => setFormData({ ...formData, authType: e.target.value })} 
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14, backgroundColor: "#fff", outline: "none" }}
-        >
-          <option value="NONE">None</option>
-          <option value="BEARER">Bearer Token (JWT)</option>
-          <option value="API_KEY">API Key</option>
-        </select>
-      </div>
+                  {activeTab === "Auth" && (
+                    <div style={{ animation: "fadeIn 0.2s ease" }}>
+                      <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 16px 0" }}>Authentication</h3>
+                      <div style={{ display: "flex", gap: 16 }}>
+                        <div style={{ width: 200 }}>
+                          <label style={{ fontSize: 13, fontWeight: 500, color: "#6b7280", marginBottom: 8, display: "block" }}>Auth type</label>
+                          <select 
+                            value={
+                              formData.authType === "Bearer Token (JWT)" || formData.authType === "BEARER" ? "BEARER" : 
+                              formData.authType === "API Key" || formData.authType === "API_KEY" ? "API_KEY" : 
+                              "NONE"
+                            } 
+                            onChange={(e) => setFormData({ ...formData, authType: e.target.value })} 
+                            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14, backgroundColor: "#fff", outline: "none" }}
+                          >
+                            <option value="NONE">None</option>
+                            <option value="BEARER">Bearer Token (JWT)</option>
+                            <option value="API_KEY">API Key</option>
+                          </select>
+                        </div>
+                        {(formData.authType === "Bearer Token (JWT)" || formData.authType === "BEARER" || formData.authType === "API Key" || formData.authType === "API_KEY") && (
+                          <div style={{ flex: 1 }}>
+                            <label style={{ fontSize: 13, fontWeight: 500, color: "#6b7280", marginBottom: 8, display: "block" }}>Token / Key value</label>
+                            <input type="password" value={formData.token || ""} onChange={(e) => setFormData({ ...formData, token: e.target.value })} placeholder="Paste your token here..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${errors.auth ? "#ef4444" : "#d1d5db"}`, fontSize: 14, outline: "none", boxSizing: "border-box", backgroundColor: errors.auth ? "#fef2f2" : "#ffffff" }} />
+                            {errors.auth && <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#ef4444", fontSize: 12, fontWeight: 500, marginTop: 8 }}><AlertCircle size={14} /> {errors.auth}</div>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
-      {/* TAB 2 AUTH */}
-      {(formData.authType === "Bearer Token (JWT)" || formData.authType === "BEARER" || formData.authType === "API Key" || formData.authType === "API_KEY") && (
-        <div style={{ flex: 1 }}>
-          <label style={{ fontSize: 13, fontWeight: 500, color: "#6b7280", marginBottom: 8, display: "block" }}>Token / Key value</label>
-          <input type="password" value={formData.token || ""} onChange={(e) => setFormData({ ...formData, token: e.target.value })} placeholder="Paste your token here..." style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${errors.auth ? "#ef4444" : "#d1d5db"}`, fontSize: 14, outline: "none", boxSizing: "border-box", backgroundColor: errors.auth ? "#fef2f2" : "#ffffff" }} />
-          {errors.auth && <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#ef4444", fontSize: 12, fontWeight: 500, marginTop: 8 }}><AlertCircle size={14} /> {errors.auth}</div>}
-        </div>
-      )}
-
-    </div>
-  </div>
-)}
-
-                  {/* TAB 3: Headers */}
                   {activeTab === "Headers" && (
                     <div style={{ animation: "fadeIn 0.2s ease" }}>
                       <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 16px 0" }}>Custom Headers</h3>
@@ -487,7 +460,6 @@ export default function ApiManagerPage() {
                     </div>
                   )}
 
-                  {/* TAB 4: Body */}
                   {activeTab === "Body" && (
                     <div style={{ animation: "fadeIn 0.2s ease" }}>
                       <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 16px 0" }}>Request Body (JSON)</h3>
@@ -502,7 +474,43 @@ export default function ApiManagerPage() {
                     </div>
                   )}
 
-                  {/* TAB 5: Assertions */}
+                  {/* ✨ NEW TAB RENDER: Scripts (Monaco Editor) */}
+                  {activeTab === "Scripts" && (
+                    <div style={{ animation: "fadeIn 0.2s ease", display: "flex", flexDirection: "column", gap: 24, height: "100%" }}>
+                      <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0" }}>Execution Scripts (JavaScript)</h3>
+                      
+                      {/* Pre-Request Section */}
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Pre-Request Script (Runs before the API call)</label>
+                        <div style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+                          <Editor
+                            height="200px"
+                            defaultLanguage="javascript"
+                            theme="vs-dark"
+                            value={formData.preRequestScript || ""}
+                            onChange={(val) => setFormData({ ...formData, preRequestScript: val || "" })}
+                            options={{ minimap: { enabled: false }, fontSize: 13, padding: { top: 12 } }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Post-Response Section */}
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Post-Response Script (Runs after the API call)</label>
+                        <div style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+                          <Editor
+                            height="200px"
+                            defaultLanguage="javascript"
+                            theme="vs-dark"
+                            value={formData.postResponseScript || ""}
+                            onChange={(val) => setFormData({ ...formData, postResponseScript: val || "" })}
+                            options={{ minimap: { enabled: false }, fontSize: 13, padding: { top: 12 } }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {activeTab === "Assertions" && (
                     <div style={{ animation: "fadeIn 0.2s ease" }}>
                       <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 16px 0" }}>Assertions (Expected Rules)</h3>
@@ -521,7 +529,6 @@ export default function ApiManagerPage() {
 
                 </div>
 
-                {/* LIVE TEST RESULTS PANE */}
                 {testResult && (
                   <div style={{ marginTop: 32, padding: 24, borderRadius: 8, border: "1px solid", borderColor: testResult.passed ? "#bbf7d0" : "#fecaca", backgroundColor: testResult.passed ? "#f0fdf4" : "#fef2f2", animation: "fadeIn 0.3s ease" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -535,6 +542,21 @@ export default function ApiManagerPage() {
                         Time: <strong>{testResult.responseTime}ms</strong>
                       </span>
                     </div>
+                    
+                    {/* Render Post-Response Script Assertion Results if any exist */}
+                    {testResult.scriptTests && testResult.scriptTests.length > 0 && (
+                      <div style={{ marginBottom: 16, display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", textTransform: "uppercase" }}>Script Assertions:</span>
+                        {testResult.scriptTests.map((t: any, i: number) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                            {t.passed ? <Check size={14} color="#16a34a" /> : <AlertCircle size={14} color="#dc2626" />}
+                            <span style={{ color: t.passed ? "#15803d" : "#b91c1c" }}>{t.name}</span>
+                            {!t.passed && t.error && <span style={{ color: "#7f1d1d", fontSize: 12 }}>- {t.error}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     <textarea 
                       readOnly 
                       value={testResult.responseBody} 
@@ -544,10 +566,8 @@ export default function ApiManagerPage() {
                 )}
               </div>
 
-              {/* ✨ ACTION FOOTER: Protected by Master UX Lock ✨ */}
               <div style={{ padding: "16px 32px", backgroundColor: "#f9fafb", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 12 }}>
                 
-                {/* 🔴 Delete Button (Locked if processing) 🔴 */}
                 {!isCreating && (
                   <button 
                     onClick={handleDeleteEndpoint}
@@ -567,7 +587,6 @@ export default function ApiManagerPage() {
                   </button>
                 )}
 
-                {/* Explicit Form Validation Warning */}
                 {!isValid && !isCreating && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#ef4444", fontSize: 13, fontWeight: 500, marginLeft: 12 }}>
                     <AlertCircle size={14} />
@@ -575,7 +594,6 @@ export default function ApiManagerPage() {
                   </div>
                 )}
 
-                {/* Pushes Save buttons to the right edge */}
                 <div style={{ flex: 1 }}></div>
 
                 {isCreating ? (
