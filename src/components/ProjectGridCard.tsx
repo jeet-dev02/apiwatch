@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import HealthCheckDrawer from "./HealthCheckDrawer";
 import { useProjects, Endpoint } from "@/context/ProjectContext";
 import { useNavigation } from "@/context/NavigationContext"; // ✨ Import Global Lock
+import { api, ApiResponse } from "@/lib/api";
 
 interface ProjectGridCardProps {
   projectId: string;
@@ -40,15 +41,9 @@ export default function ProjectGridCard({ projectId, endpoints, title }: Project
   const isTesting = globalNavTarget === testHref;
 
   useEffect(() => {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-    const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
-
     const fetchRuns = async () => {
       try {
-        const response = await fetch(`${API_URL}/projects/${projectId}/test-runs`, {
-          headers: { "x-api-key": API_KEY }
-        });
-        const json = await response.json();
+        const json = await api.get<ApiResponse<unknown[]>>(`/projects/${projectId}/test-runs`);
         if (json.success) {
           setTestRuns(json.data);
         }

@@ -1,6 +1,8 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { api, ApiResponse } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 export interface StatefulAlert {
   id: string;
@@ -25,18 +27,13 @@ const AlertContext = createContext<AlertContextType | undefined>(undefined);
 
 export function AlertProvider({ children }: { children: ReactNode }) {
   const [alerts, setAlerts] = useState<StatefulAlert[]>([]);
+  const { user, loading: authLoading } = useAuth();
 
   // Function to fetch real data from your Fastify backend
   const refreshAlerts = useCallback(async () => {
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
+      const json = await api.get<ApiResponse<StatefulAlert[]>>("/alerts");
 
-      const response = await fetch(`${API_URL}/alerts`, {
-        headers: { "x-api-key": API_KEY }
-      });
-      const json = await response.json();
-      
       if (json.success) {
         setAlerts(json.data);
       }
@@ -45,23 +42,27 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Initial load and real-time polling (every 10 seconds)
+  // Initial load and real-time polling (every 10 seconds).
+  // Gated on the session: with no user there is nobody to fetch alerts for, and
+  // every request would just 401. Re-runs when the signed-in user changes, so a
+  // new session loads its own org's alerts rather than the previous one's.
+  const userId = user?.id ?? null;
+
   useEffect(() => {
+    if (authLoading || !userId) {
+      setAlerts([]);
+      return;
+    }
+
     refreshAlerts();
     const interval = setInterval(refreshAlerts, 10000);
     return () => clearInterval(interval);
-  }, [refreshAlerts]);
+  }, [authLoading, userId, refreshAlerts]);
 
   // Real API call to resolve a single alert
   const resolveAlert = async (id: string) => {
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
-
-      await fetch(`${API_URL}/alerts/${id}/resolve`, {
-        method: "PATCH",
-        headers: { "x-api-key": API_KEY }
-      });
+      await api.patch<ApiResponse<StatefulAlert>>(`/alerts/${id}/resolve`);
       await refreshAlerts();
     } catch (error) {
       console.error("Failed to resolve alert", error);
@@ -71,13 +72,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
   // Real API call to resolve all active alerts
   const resolveAll = async () => {
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
-
-      await fetch(`${API_URL}/alerts/resolve-all`, {
-        method: "PATCH",
-        headers: { "x-api-key": API_KEY }
-      });
+      await api.patch<ApiResponse<unknown>>("/alerts/resolve-all");
       await refreshAlerts();
     } catch (error) {
       console.error("Failed to resolve all alerts", error);

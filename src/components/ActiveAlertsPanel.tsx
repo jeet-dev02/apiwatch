@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useAlerts } from "@/context/AlertContext";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useNavigation } from "@/context/NavigationContext"; // ✨ Import Global Lock
+import { api, ApiResponse } from "@/lib/api";
 
 const severityConfig = {
   critical: { bg: "#fef2f2", dot: "#dc2626", border: "#fee2e2" },
@@ -25,14 +26,8 @@ export default function ActiveAlertsPanel() {
   const handleResolve = async (alertId: string) => {
     setResolvingId(alertId);
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
+      await api.patch<ApiResponse<unknown>>(`/alerts/${alertId}/resolve`);
 
-      await fetch(`${API_URL}/alerts/${alertId}/resolve`, {
-        method: "PATCH",
-        headers: { "x-api-key": API_KEY }
-      });
-      
       if (refreshAlerts) await refreshAlerts();
     } catch (error) {
       console.error("Failed to resolve alert", error);

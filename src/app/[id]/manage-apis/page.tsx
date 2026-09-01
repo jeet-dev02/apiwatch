@@ -6,7 +6,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation"; 
 import { useProjects, Endpoint, HttpMethod } from "@/context/ProjectContext";
 import PageSkeleton from "@/components/ui/PageSkeleton";
-import Editor from "@monaco-editor/react"; 
+import Editor from "@monaco-editor/react";
+import { api, ApiResponse, UnauthorizedError } from "@/lib/api";
 
 const emptyEndpoint: Endpoint = {
   id: "new", 
@@ -127,27 +128,19 @@ export default function ApiManagerPage() {
     
     setIsDeletingEndpoint(true);
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-      const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
+      await api.delete<ApiResponse<unknown>>(`/projects/${currentProject.id}/endpoints/${activeId}`);
 
-      const response = await fetch(`${API_URL}/projects/${currentProject.id}/endpoints/${activeId}`,{
-        method: "DELETE",
-        headers: { "x-api-key": API_KEY }
-      });
-
-      if (response.ok) {
-        const newEndpoints = endpoints.filter(ep => ep.id !== activeId);
-        setEndpoints(newEndpoints);
-        if (newEndpoints.length > 0) {
-          handleSelect(newEndpoints[0]);
-        } else {
-          handleAddNew();
-        }
+      const newEndpoints = endpoints.filter(ep => ep.id !== activeId);
+      setEndpoints(newEndpoints);
+      if (newEndpoints.length > 0) {
+        handleSelect(newEndpoints[0]);
       } else {
-        alert("Failed to delete endpoint from the server.");
+        handleAddNew();
       }
     } catch (error) {
       console.error("Failed to delete endpoint", error);
+      // A 401 already redirects to /login; alerting would flash mid-navigation.
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
     } finally {
       setIsDeletingEndpoint(false);
     }

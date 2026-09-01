@@ -7,6 +7,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useProjects } from "@/context/ProjectContext";
 import OverallPerformanceChart from "@/components/OverallPerformanceChart"; 
 import PageSkeleton from "@/components/ui/PageSkeleton"; 
+import { api, ApiResponse } from "@/lib/api";
 
 interface TestResult {
   id: string;
@@ -147,9 +148,6 @@ function TestRunsContent() {
 
   const [forceHollywoodDelay, setForceHollywoodDelay] = useState(searchParams?.get("activeRun") === "true");
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-  const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
-
   useEffect(() => {
     if (forceHollywoodDelay) {
       const timer = setTimeout(() => {
@@ -162,15 +160,14 @@ function TestRunsContent() {
 
   useEffect(() => {
     if (!currentProject) return;
-    let pollInterval: NodeJS.Timeout;
+    
+    let timerId: NodeJS.Timeout;
+    let pollDelay = 2000; // Start at 2 seconds
 
     const fetchLatestRun = async () => {
       try {
-        const response = await fetch(`${API_URL}/projects/${currentProject.id}/test-runs`, {
-          headers: { "x-api-key": API_KEY }
-        });
-        const json = await response.json();
-        
+        const json = await api.get<ApiResponse<TestRun[]>>(`/projects/${currentProject.id}/test-runs`);
+
         if (json.success && json.data.length > 0) {
           setTestRuns(json.data); 
           const latest = json.data[0];
@@ -179,9 +176,12 @@ function TestRunsContent() {
           
           if (latest.status === "COMPLETED" || latest.status === "FAILED") {
             setIsRunning(false);
-            if(pollInterval) clearInterval(pollInterval);
+            return; // Exit the loop entirely
           } else {
             setIsRunning(true);
+            // Exponential backoff: increase delay by 1.5x, cap at 10 seconds
+            pollDelay = Math.min(pollDelay * 1.5, 10000);
+            timerId = setTimeout(fetchLatestRun, pollDelay);
           }
         } else {
           setIsInitialLoad(false);
@@ -189,16 +189,16 @@ function TestRunsContent() {
       } catch (err) {
         console.error("Failed to fetch runs", err);
         setIsInitialLoad(false);
+        // Retry on failure, but back off slightly to give the server breathing room
+        pollDelay = Math.min(pollDelay * 1.5, 10000);
+        timerId = setTimeout(fetchLatestRun, pollDelay);
       }
     };
 
     fetchLatestRun();
-    if (isRunning || isInitialLoad) {
-       pollInterval = setInterval(fetchLatestRun, 2000);
-    }
-    return () => clearInterval(pollInterval);
-  }, [currentProject, isRunning, isInitialLoad]);
 
+    return () => clearTimeout(timerId);
+  }, [currentProject]);
   const displayAsRunning = isRunning || forceHollywoodDelay;
 
   if (!currentProject) {

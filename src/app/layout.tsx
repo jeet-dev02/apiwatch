@@ -4,6 +4,7 @@ import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import NavigationWrapper from "@/components/NavigationWrapper"; 
 
+import { AuthProvider } from "@/context/AuthContext";
 import { ProjectProvider } from "@/context/ProjectContext";
 import { AlertProvider } from "@/context/AlertContext";
 import { NavigationProvider } from "@/context/NavigationContext";
@@ -34,19 +35,21 @@ export default function RootLayout({
           margin: 0,
         }}
       >
-        <NavigationProvider>
-          <ProjectProvider>
-            <AlertProvider>
-              
-              <Sidebar />
-             
-              <NavigationWrapper>
-                {children}
-              </NavigationWrapper>
+        <AuthProvider>
+          <NavigationProvider>
+            <ProjectProvider>
+              <AlertProvider>
 
-            </AlertProvider>
-          </ProjectProvider>
-        </NavigationProvider>
+                <Sidebar />
+
+                <NavigationWrapper>
+                  {children}
+                </NavigationWrapper>
+
+              </AlertProvider>
+            </ProjectProvider>
+          </NavigationProvider>
+        </AuthProvider>
       </body>
     </html>
   );

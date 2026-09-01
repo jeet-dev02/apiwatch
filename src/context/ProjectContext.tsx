@@ -1,6 +1,8 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { api, ApiError, ApiResponse, UnauthorizedError } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 // --- Global Types for Endpoints ---
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
@@ -48,19 +50,12 @@ const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<ProjectData[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const { user, loading: authLoading } = useAuth();
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-  const API_KEY = process.env.NEXT_PUBLIC_API_KEY as string;
-
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/projects`, {
-        headers: {
-          "x-api-key": API_KEY
-        }
-      });
-      const json = await response.json();
-      
+      const json = await api.get<ApiResponse<ProjectData[]>>("/projects");
+
       if (json.success) {
         setProjects(json.data);
       }
@@ -69,53 +64,50 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoaded(true);
     }
-  };
+  }, []);
+
+  // Gated on the session: with no user every request would just 401. Note the
+  // signed-out branch still has to set isLoaded, because this provider renders
+  // null until then — without it /login would never paint.
+  const userId = user?.id ?? null;
 
   useEffect(() => {
+    if (authLoading) return;
+
+    if (!userId) {
+      setProjects([]);
+      setIsLoaded(true);
+      return;
+    }
+
     fetchProjects();
-  }, []);
+  }, [authLoading, userId, fetchProjects]);
 
   const addProject = async (name: string, swaggerUrl?: string, baseUrlOverride?: string) => { 
     try {
-      const response = await fetch(`${API_URL}/projects`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY 
-        },
-        body: JSON.stringify({ title: name })
-      });
-      const json = await response.json();
+      const json = await api.post<ApiResponse<ProjectData>>("/projects", { title: name });
 
-      if (json.success) {
-        const newProject = json.data;
-        setProjects((prev) => [newProject, ...prev]);
+      const newProject = json.data;
+      setProjects((prev) => [newProject, ...prev]);
 
-        if (swaggerUrl && swaggerUrl.trim() !== "") {
-          try {
-            await importSwagger(newProject.id, swaggerUrl.trim(), baseUrlOverride);
-          } catch (importError) {
-            console.error("Swagger import failed during project creation", importError);
-            alert("Project was created, but we couldn't import the Swagger URL. You can try again from the API Manager.");
-          }
+      if (swaggerUrl && swaggerUrl.trim() !== "") {
+        try {
+          await importSwagger(newProject.id, swaggerUrl.trim(), baseUrlOverride);
+        } catch (importError) {
+          console.error("Swagger import failed during project creation", importError);
+          alert("Project was created, but we couldn't import the Swagger URL. You can try again from the API Manager.");
         }
-      } else {
-        alert(`Failed to create project: ${json.error}`);
       }
     } catch (error) {
       console.error("Error creating project:", error);
+      // A 401 already redirects to /login; alerting would flash mid-navigation.
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
     }
   };
 
   const removeProject = async (id: string) => {
     try {
-      const response = await fetch(`${API_URL}/projects/${id}`, { 
-        method: "DELETE",
-        headers: {
-          "x-api-key": API_KEY
-        }
-      });
-      const json = await response.json();
+      const json = await api.delete<ApiResponse<unknown>>(`/projects/${id}`);
 
       if (json.success) {
         setProjects((prev) => prev.filter((project) => project.id !== id));
@@ -136,27 +128,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         maxResponseTime: String(endpointData.maxResponseTime) 
       };
 
-      const response = await fetch(`${API_URL}/projects/${projectId}/endpoints`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY 
-        },
-        body: JSON.stringify(payload)
-      });
-      const json = await response.json();
+      const json = await api.post<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints`, payload);
 
-      if (json.success) {
-        setProjects((prev) => prev.map(p => 
-          p.id === projectId 
-            ? { ...p, endpoints: [...p.endpoints, json.data] } 
-            : p
-        ));
-      } else {
-        alert(`Failed to save endpoint: ${JSON.stringify(json.error)}`);
-      }
+      setProjects((prev) => prev.map(p =>
+        p.id === projectId
+          ? { ...p, endpoints: [...p.endpoints, json.data] }
+          : p
+      ));
     } catch (error) {
       console.error("Error saving endpoint:", error);
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
     }
   };
 
@@ -167,83 +148,57 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         maxResponseTime: String(endpointData.maxResponseTime)
       };
 
-      const response = await fetch(`${API_URL}/projects/${projectId}/endpoints/${endpointData.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-        body: JSON.stringify(payload)
-      });
-      const json = await response.json();
+      const json = await api.put<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints/${endpointData.id}`, payload);
 
-      if (json.success) {
-        setProjects((prev) => prev.map(p => 
-          p.id === projectId 
-            ? { ...p, endpoints: p.endpoints.map(ep => ep.id === endpointData.id ? json.data : ep) } 
-            : p
-        ));
-        return true; 
-      } else {
-        const errorMsg = typeof json.error === 'object' ? JSON.stringify(json.error) : json.error;
-        alert(`Failed to update endpoint: ${errorMsg}`);
-        return false; 
-      }
+      setProjects((prev) => prev.map(p =>
+        p.id === projectId
+          ? { ...p, endpoints: p.endpoints.map(ep => ep.id === endpointData.id ? json.data : ep) }
+          : p
+      ));
+      return true;
     } catch (error) {
       console.error("Error updating endpoint:", error);
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
       return false;
     }
   };
 
   const testEndpoint = async (projectId: string, endpointId: string) => {
-    const response = await fetch(`${API_URL}/projects/${projectId}/endpoints/${endpointId}/test`, {
-      method: "POST",
-      headers: { "x-api-key": API_KEY }
-    });
-    return await response.json();
+    try {
+      return await api.post<ApiResponse<unknown>>(`/projects/${projectId}/endpoints/${endpointId}/test`);
+    } catch (error) {
+      // A test that fails to execute still comes back as { success: false, error },
+      // which is what the caller branches on - hand that body over rather than throw.
+      if (error instanceof ApiError && error.body) return error.body;
+      throw error;
+    }
   };
 
   const importSwagger = async (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => {
     try {
-      const response = await fetch(`${API_URL}/projects/${projectId}/import-swagger`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY 
-        },
-        body: JSON.stringify({ swaggerUrl, baseUrlOverride })
-      });
-      const json = await response.json();
+      const json = await api.post<ApiResponse<Endpoint[]>>(`/projects/${projectId}/import-swagger`, { swaggerUrl, baseUrlOverride });
 
-      if (json.success) {
-        setProjects((prev) => prev.map(p => 
-          p.id === projectId 
-            ? { ...p, endpoints: json.data } 
-            : p
-        ));
-      } else {
-        alert(`Import failed: ${json.error}`);
-        throw new Error(json.error);
-      }
+      setProjects((prev) => prev.map(p =>
+        p.id === projectId
+          ? { ...p, endpoints: json.data }
+          : p
+      ));
     } catch (error) {
       console.error("Error importing swagger:", error);
-      throw error; 
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
+      throw error;
     }
   };
 
   const runAllTests = async (projectId: string) => {
     try {
-      const response = await fetch(`${API_URL}/projects/${projectId}/run-all`, {
-        method: "POST",
-        headers: { "x-api-key": API_KEY }
-      });
-      const json = await response.json();
-      
-      if (json.success) {
-        return json.testRunId;
-      } else {
-        alert(`Failed to start suite: ${json.error}`);
-        return null;
-      }
+      // testRunId sits at the top level of the payload, not inside `data`.
+      const json = await api.post<ApiResponse<unknown> & { testRunId?: string }>(`/projects/${projectId}/run-all`);
+
+      return json.testRunId ?? null;
     } catch (error) {
       console.error("Error triggering test suite:", error);
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
       return null;
     }
   };

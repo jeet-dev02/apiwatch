@@ -13,6 +13,7 @@ import CreateProjectHeaderButton from "@/components/CreateProjectHeaderButton";
 import CreateProjectModal, { CreateProjectData } from "@/components/CreateProjectModal";
 import { Folder, Code2, Activity, ShieldAlert, BellRing } from "lucide-react";
 import { useNavigation } from "@/context/NavigationContext";
+import { api, ApiResponse } from "@/lib/api";
 
 export default function Home() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -26,13 +27,8 @@ export default function Home() {
   useEffect(() => {
     async function fetchDashboardStats() {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/stats`, {
-          headers: {
-            "x-api-key": process.env.NEXT_PUBLIC_API_KEY as string 
-          }
-        });
-        const json = await response.json();
-        
+        const json = await api.get<ApiResponse<unknown>>("/stats");
+
         if (json.success) {
           setStatsData(json.data);
         }

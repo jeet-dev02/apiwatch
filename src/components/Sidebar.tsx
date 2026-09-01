@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useNavigation } from "@/context/NavigationContext"; 
+import { useState } from "react";
+import { useNavigation } from "@/context/NavigationContext";
+import { useAuth } from "@/context/AuthContext";
 import {
   Shield,
   LayoutDashboard,
   FolderOpen,
   Bell,
   Loader2,
+  LogOut,
 } from "lucide-react";
 
 
@@ -21,6 +24,18 @@ const navItems = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { isNavigating, navigatingTo, startNavigation } = useNavigation();
+  const { user, logout } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await logout();
+    } catch (error) {
+      console.error("Sign out failed", error);
+      setSigningOut(false);
+    }
+  };
 
   return (
     <aside
@@ -41,7 +56,7 @@ export default function Sidebar() {
      
       <Link 
         href="/"
-        onClick={(e) => {
+        onClick={() => {
           if (pathname !== "/") startNavigation("/");
         }}
         style={{ 
@@ -71,7 +86,7 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
-              onClick={(e) => {
+              onClick={() => {
                 if (!isActive) startNavigation(href);
               }}
               style={{
@@ -116,7 +131,67 @@ export default function Sidebar() {
           );
         })}
       </nav>
-      
+
+      {/* Only rendered once a session exists — the sidebar also shows on /login,
+          where there is no user to sign out. */}
+      {user && (
+        <div style={{ borderTop: "1px solid #e5e7eb", padding: "12px 12px 16px" }}>
+          <div
+            title={user.email}
+            style={{
+              fontSize: 12,
+              color: "#6b7280",
+              padding: "0 4px 8px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {user.email}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid #e5e7eb",
+              backgroundColor: "#ffffff",
+              fontSize: 14,
+              color: "#6b7280",
+              cursor: signingOut ? "default" : "pointer",
+              opacity: signingOut ? 0.6 : 1,
+              transition: "background-color 150ms, color 150ms",
+            }}
+            onMouseEnter={(e) => {
+              if (!signingOut) {
+                e.currentTarget.style.backgroundColor = "#fef2f2";
+                e.currentTarget.style.color = "#dc2626";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!signingOut) {
+                e.currentTarget.style.backgroundColor = "#ffffff";
+                e.currentTarget.style.color = "#6b7280";
+              }
+            }}
+          >
+            {signingOut ? (
+              <Loader2 size={16} style={{ flexShrink: 0, animation: "spin 1s linear infinite" }} />
+            ) : (
+              <LogOut size={16} style={{ flexShrink: 0 }} />
+            )}
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      )}
+
       <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}} />
     </aside>
   );
