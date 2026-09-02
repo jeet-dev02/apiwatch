@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, FormEvent, CSSProperties } from "react";
+import { useState, useEffect, FormEvent, CSSProperties } from "react";
 import { Shield, Loader2, AlertCircle } from "lucide-react";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, destinationAfterAuth } from "@/context/AuthContext";
 
 const labelStyle: CSSProperties = {
   fontSize: 13,
@@ -38,7 +38,7 @@ const focusHandlers = {
 };
 
 export default function LoginPage() {
-  const { login, register } = useAuth();
+  const { login, register, user, loading: sessionLoading } = useAuth();
 
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -49,6 +49,22 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   const isRegister = mode === "register";
+
+  // Someone who already has a session has no business seeing this form — send
+  // them on to the app.
+  //
+  // Gated on the session the backend confirmed, not on the cookie: the
+  // middleware only checks that a cookie exists, so bouncing off /login there
+  // would trap anyone holding a present-but-rejected cookie (a rotated signing
+  // key, a skewed clock) in a redirect loop with the 401 handler in lib/api.
+  // Here a dead cookie just leaves `user` null and renders the form, which is
+  // exactly what that person needs. Same document navigation as leaving after a
+  // login, and for the same cached-redirect reason.
+  const signedIn = !sessionLoading && user !== null;
+
+  useEffect(() => {
+    if (signedIn) window.location.replace(destinationAfterAuth());
+  }, [signedIn]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -72,6 +88,29 @@ export default function LoginPage() {
       setBusy(false);
     }
   };
+
+  // Either the session check is still out, or it came back signed in and the
+  // redirect above is in flight. Neither is a moment to show a login form.
+  if (sessionLoading || signedIn) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          backgroundColor: "#f9fafb",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Loader2 size={28} color="#9ca3af" style={{ animation: "spin 1s linear infinite" }} />
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`,
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div

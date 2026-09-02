@@ -33,8 +33,11 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
  * Only same-origin paths are honoured. `next` comes off the URL bar, so
  * "//evil.example" or "https://evil.example" would otherwise make the login
  * form an open redirect.
+ *
+ * Exported so the login page can bounce an already-signed-in visitor to the
+ * same place, through the same guard.
  */
-function destinationAfterAuth(): string {
+export function destinationAfterAuth(): string {
   if (typeof window === "undefined") return "/";
 
   const next = new URLSearchParams(window.location.search).get("next");
