@@ -77,9 +77,16 @@ async function request<T>(path: string, options: Options = {}): Promise<T> {
       : null;
 
   if (response.status === 401) {
-    // Let the app redirect to login rather than rendering an empty dashboard.
+    // Bounce to login rather than rendering an empty dashboard. This is the
+    // backstop for a session that dies while the page is open, when the (app)
+    // guard is still holding a stale `user` and will not fire on its own.
+    //
+    // Carries the current path for the same reason the guard does. On a cold
+    // load both fire and either may win the race, so if this one dropped the
+    // param the deep link would be lost about half the time.
     if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?next=${next}`;
     }
     throw new UnauthorizedError(serverMessage ?? undefined);
   }

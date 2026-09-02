@@ -53,13 +53,12 @@ export default function LoginPage() {
   // Someone who already has a session has no business seeing this form — send
   // them on to the app.
   //
-  // Gated on the session the backend confirmed, not on the cookie: the
-  // middleware only checks that a cookie exists, so bouncing off /login there
-  // would trap anyone holding a present-but-rejected cookie (a rotated signing
-  // key, a skewed clock) in a redirect loop with the 401 handler in lib/api.
-  // Here a dead cookie just leaves `user` null and renders the form, which is
-  // exactly what that person needs. Same document navigation as leaving after a
-  // login, and for the same cached-redirect reason.
+  // Keyed on the session /auth/me confirmed, never on the cookie: the cookie
+  // belongs to the backend's domain and this origin cannot read it at all. It
+  // is also what keeps this safe against a cookie the browser still holds but
+  // the backend rejects — a rotated signing key, a skewed clock. That leaves
+  // `user` null, so the form renders instead of bouncing, and the guard in the
+  // (app) layout sends the same person here rather than back and forth.
   const signedIn = !sessionLoading && user !== null;
 
   useEffect(() => {

@@ -24,8 +24,8 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 /**
  * Where to send someone once they are signed in.
  *
- * The middleware bounces unauthenticated visitors to /login?next=<path>, so
- * hand them back the page they were actually after. Read straight from
+ * The (app) layout guard bounces unauthenticated visitors to /login?next=<path>,
+ * so hand them back the page they were actually after. Read straight from
  * window.location instead of useSearchParams: this only ever runs from a submit
  * handler, and a search-param hook in a provider mounted this high would drag
  * every page underneath it into a Suspense boundary.
@@ -103,12 +103,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /**
    * A real page load, deliberately — not router.push().
    *
-   * The App Router still holds the middleware's redirect for "/" from back when
-   * there was no cookie, so pushing there replays the cached redirect and the
-   * user never leaves /login even though they are signed in. A document
-   * navigation re-runs the middleware against the cookie the backend just set
-   * and remounts the app with the session already in place. `replace` also
-   * keeps /login out of the back-button history.
+   * This originally worked around the App Router replaying a cached middleware
+   * redirect for "/". That middleware is gone, so the cache is no longer the
+   * reason; a document load is kept because it is still the simpler guarantee.
+   * The app remounts with the session already applied, so the (app) guard sees
+   * a settled `user` on its first render rather than racing the session check.
+   * `replace` also keeps /login out of the back-button history.
    */
   const leaveLoginPage = useCallback(() => {
     window.location.replace(destinationAfterAuth());
