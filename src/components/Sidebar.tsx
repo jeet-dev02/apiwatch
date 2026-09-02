@@ -132,8 +132,9 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Only rendered once a session exists — the sidebar also shows on /login,
-          where there is no user to sign out. */}
+      {/* Only rendered once a session exists. The sidebar is confined to the
+          (app) route group, so there is always a user by the time it settles —
+          this still guards the first paint, before the session check returns. */}
       {user && (
         <div style={{ borderTop: "1px solid #e5e7eb", padding: "12px 12px 16px" }}>
           <div

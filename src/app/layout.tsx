@@ -1,13 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar";
-import NavigationWrapper from "@/components/NavigationWrapper"; 
 
 import { AuthProvider } from "@/context/AuthContext";
-import { ProjectProvider } from "@/context/ProjectContext";
-import { AlertProvider } from "@/context/AlertContext";
-import { NavigationProvider } from "@/context/NavigationContext";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -20,6 +15,14 @@ export const metadata: Metadata = {
     "Internal API testing dashboard for monitoring REST, GraphQL, and Auth-protected APIs",
 };
 
+/**
+ * The document shell, and nothing else.
+ *
+ * The app chrome — sidebar, nav, project/alert data — lives in the (app) route
+ * group so it only wraps signed-in pages. /login sits in (auth) and renders
+ * standalone. AuthProvider stays here, above both groups, because the login
+ * form needs it just as much as the dashboard does.
+ */
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -35,21 +38,7 @@ export default function RootLayout({
           margin: 0,
         }}
       >
-        <AuthProvider>
-          <NavigationProvider>
-            <ProjectProvider>
-              <AlertProvider>
-
-                <Sidebar />
-
-                <NavigationWrapper>
-                  {children}
-                </NavigationWrapper>
-
-              </AlertProvider>
-            </ProjectProvider>
-          </NavigationProvider>
-        </AuthProvider>
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
