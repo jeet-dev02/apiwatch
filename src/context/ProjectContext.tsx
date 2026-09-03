@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
-import { api, ApiError, ApiResponse, UnauthorizedError } from "@/lib/api";
+import { api, ApiError, ApiResponse, UnauthorizedError, asArray } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 // --- Global Types for Endpoints ---
@@ -47,6 +47,17 @@ interface ProjectContextType {
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
+/**
+ * Guarantee the one shape the rest of the app relies on.
+ *
+ * Consumers index straight into `project.endpoints` — ProjectGridCard reads
+ * .length, the API manager maps over it — so a project that arrives without
+ * the relation would crash the page rather than render an empty card.
+ */
+function normaliseProject(project: ProjectData): ProjectData {
+  return { ...project, endpoints: asArray<Endpoint>(project?.endpoints) };
+}
+
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<ProjectData[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -57,7 +68,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const json = await api.get<ApiResponse<ProjectData[]>>("/projects");
 
       if (json.success) {
-        setProjects(json.data);
+        setProjects(asArray<ProjectData>(json.data).map(normaliseProject));
       }
     } catch (error) {
       console.error("Failed to fetch projects from backend:", error);
@@ -87,7 +98,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     try {
       const json = await api.post<ApiResponse<ProjectData>>("/projects", { title: name });
 
-      const newProject = json.data;
+      if (!json.data?.id) {
+        throw new Error("The server created the project but returned nothing to show.");
+      }
+
+      const newProject = normaliseProject(json.data);
       setProjects((prev) => [newProject, ...prev]);
 
       if (swaggerUrl && swaggerUrl.trim() !== "") {
@@ -130,9 +145,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
       const json = await api.post<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints`, payload);
 
+      // Appending an undefined would leave a hole the list rendering trips on.
+      if (!json.data?.id) {
+        throw new Error("The server saved the endpoint but returned nothing to show.");
+      }
+
       setProjects((prev) => prev.map(p =>
         p.id === projectId
-          ? { ...p, endpoints: [...p.endpoints, json.data] }
+          ? { ...p, endpoints: [...asArray<Endpoint>(p.endpoints), json.data] }
           : p
       ));
     } catch (error) {
@@ -150,9 +170,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
       const json = await api.put<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints/${endpointData.id}`, payload);
 
+      // Fall back to what we just sent rather than blanking the row.
+      const saved = json.data?.id ? json.data : endpointData;
+
       setProjects((prev) => prev.map(p =>
         p.id === projectId
-          ? { ...p, endpoints: p.endpoints.map(ep => ep.id === endpointData.id ? json.data : ep) }
+          ? { ...p, endpoints: asArray<Endpoint>(p.endpoints).map(ep => ep.id === endpointData.id ? saved : ep) }
           : p
       ));
       return true;
@@ -180,7 +203,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
       setProjects((prev) => prev.map(p =>
         p.id === projectId
-          ? { ...p, endpoints: json.data }
+          ? { ...p, endpoints: asArray<Endpoint>(json.data) }
           : p
       ));
     } catch (error) {

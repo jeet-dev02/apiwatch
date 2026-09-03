@@ -7,7 +7,7 @@ import { useParams } from "next/navigation";
 import { useProjects, Endpoint, HttpMethod } from "@/context/ProjectContext";
 import PageSkeleton from "@/components/ui/PageSkeleton";
 import Editor from "@monaco-editor/react";
-import { api, ApiResponse, UnauthorizedError } from "@/lib/api";
+import { api, ApiResponse, UnauthorizedError, asArray } from "@/lib/api";
 
 const emptyEndpoint: Endpoint = {
   id: "new", 
@@ -60,7 +60,9 @@ export default function ApiManagerPage() {
 
   useEffect(() => {
     if (currentProject) {
-      setEndpoints(currentProject.endpoints);
+      // endpoints drives .length and .map below, so it has to be a list even
+      // if the project came back without the relation.
+      setEndpoints(asArray<Endpoint>(currentProject.endpoints));
     }
   }, [currentProject?.endpoints]);
 
@@ -227,10 +229,14 @@ export default function ApiManagerPage() {
     }
   };
 
-  const handleAddHeader = () => setFormData({ ...formData, headers: [...formData.headers, { key: "", value: "" }] });
-  const handleRemoveHeader = (index: number) => setFormData({ ...formData, headers: formData.headers.filter((_, i) => i !== index) });
+  // headers is a Json column on the backend, so an older row can hand back null
+  // rather than a list. Read it through this everywhere it is spread or mapped.
+  const formHeaders = asArray<{ key: string; value: string }>(formData.headers);
+
+  const handleAddHeader = () => setFormData({ ...formData, headers: [...formHeaders, { key: "", value: "" }] });
+  const handleRemoveHeader = (index: number) => setFormData({ ...formData, headers: formHeaders.filter((_, i) => i !== index) });
   const handleHeaderChange = (index: number, field: "key" | "value", newValue: string) => {
-    const newHeaders = [...formData.headers];
+    const newHeaders = [...formHeaders];
     newHeaders[index][field] = newValue;
     setFormData({ ...formData, headers: newHeaders });
   };
@@ -442,7 +448,7 @@ export default function ApiManagerPage() {
                   {activeTab === "Headers" && (
                     <div style={{ animation: "fadeIn 0.2s ease" }}>
                       <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 16px 0" }}>Custom Headers</h3>
-                      {formData.headers.map((header, index) => (
+                      {formHeaders.map((header, index) => (
                         <div key={index} style={{ display: "flex", gap: 12, marginBottom: 12 }}>
                           <input type="text" value={header.key} onChange={(e) => handleHeaderChange(index, "key", e.target.value)} placeholder="Key (e.g. Content-Type)" style={{ width: 200, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14, fontFamily: "monospace", outline: "none" }} />
                           <input type="text" value={header.value} onChange={(e) => handleHeaderChange(index, "value", e.target.value)} placeholder="Value (e.g. application/json)" style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14, fontFamily: "monospace", outline: "none" }} />

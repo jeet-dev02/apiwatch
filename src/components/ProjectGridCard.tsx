@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import HealthCheckDrawer from "./HealthCheckDrawer";
 import { useProjects, Endpoint } from "@/context/ProjectContext";
 import { useNavigation } from "@/context/NavigationContext"; // ✨ Import Global Lock
-import { api, ApiResponse } from "@/lib/api";
+import { api, ApiResponse, asArray } from "@/lib/api";
 
 interface ProjectGridCardProps {
   projectId: string;
@@ -45,7 +45,7 @@ export default function ProjectGridCard({ projectId, endpoints, title }: Project
       try {
         const json = await api.get<ApiResponse<unknown[]>>(`/projects/${projectId}/test-runs`);
         if (json.success) {
-          setTestRuns(json.data);
+          setTestRuns(asArray(json.data));
         }
       } catch (err) {
         console.error("Failed to fetch runs for project", projectId);

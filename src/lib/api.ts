@@ -117,6 +117,19 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
+/**
+ * Read a list out of a response body.
+ *
+ * Every list endpoint is meant to send `data: [...]`, but a handler that
+ * returns early, a route that answers with `message` instead of `data`, or an
+ * older deployment can leave it undefined. Callers then run .map or .length on
+ * undefined and take the whole page down with a client-side exception, so
+ * normalise once at the boundary rather than guarding at every use site.
+ */
+export function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────
 
 export interface SessionUser {

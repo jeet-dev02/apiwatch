@@ -14,10 +14,11 @@ import { Activity, AlertTriangle, Clock, Zap } from "lucide-react";
 interface TestResult {
     id: string;
     endpointId: string;
-    responseTimeMs: number;
+    // Nullable in the schema — a request that never completed has no timing.
+    responseTimeMs: number | null;
     result: "PASS" | "WARN" | "FAIL";
     consistencyStable: boolean;
-    endpoint: { method: string; path: string };
+    endpoint?: { method: string; path: string };
 }
 
 interface TestRun {
@@ -60,8 +61,8 @@ export default function OverallPerformanceChart({ historicalRuns = [], latestRun
 
     // Find the absolute slowest API in the burst safely
     const slowestResult = latestRun.results && latestRun.results.length > 0
-        ? latestRun.results.reduce((prev, current) => 
-            (prev.responseTimeMs > current.responseTimeMs) ? prev : current
+        ? latestRun.results.reduce((prev, current) =>
+            (prev.responseTimeMs ?? 0) > (current.responseTimeMs ?? 0) ? prev : current
           )
         : null;
 
@@ -131,7 +132,7 @@ export default function OverallPerformanceChart({ historicalRuns = [], latestRun
                     </div>
 
                     {/* Metric 3: The Bottleneck (Slowest API) */}
-                    {slowestResult && slowestResult.responseTimeMs > 0 && (
+                    {slowestResult && (slowestResult.responseTimeMs ?? 0) > 0 && (
                         <div style={{ padding: "12px", backgroundColor: "#fffbeb", borderRadius: 8, border: "1px solid #fde68a" }}>
                             <div style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 700, color: "#d97706", marginBottom: 4 }}>
                                 System Bottleneck

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
-import { api, ApiResponse } from "@/lib/api";
+import { api, ApiResponse, asArray } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 export interface StatefulAlert {
@@ -35,7 +35,9 @@ export function AlertProvider({ children }: { children: ReactNode }) {
       const json = await api.get<ApiResponse<StatefulAlert[]>>("/alerts");
 
       if (json.success) {
-        setAlerts(json.data);
+        // Never let a missing `data` put undefined into state — every consumer
+        // calls .filter or .map on this and would take the page down.
+        setAlerts(asArray<StatefulAlert>(json.data));
       }
     } catch (error) {
       console.error("Failed to fetch real alerts from backend", error);

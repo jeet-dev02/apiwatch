@@ -7,19 +7,48 @@ import { useState, useEffect, Suspense } from "react";
 import { useProjects } from "@/context/ProjectContext";
 import OverallPerformanceChart from "@/components/OverallPerformanceChart"; 
 import PageSkeleton from "@/components/ui/PageSkeleton"; 
-import { api, ApiResponse } from "@/lib/api";
+import { api, ApiResponse, asArray } from "@/lib/api";
 
 interface TestResult {
   id: string;
   endpointId: string;
   statusCode: number | null;
-  responseTimeMs: number;
+  // Nullable in the schema — a request that never completed has no timing.
+  responseTimeMs: number | null;
   result: "PASS" | "WARN" | "FAIL";
   errorMessage: string | null;
   consistencyStable: boolean;
-  consistencyResults: string; 
-  endpoint: { method: string; path: string };
+  // A Prisma Json column, so this arrives as a real array of ping timings.
+  // Older rows may still hold a JSON string; readPings takes either.
+  consistencyResults: number[] | string | null;
+  endpoint?: { method: string; path: string };
   authResult: string;
+}
+
+/**
+ * The 10 ping timings behind a result.
+ *
+ * This was `JSON.parse(consistencyResults || "[]")`, which is what crashed the
+ * page in production. consistencyResults is a Json column holding an array, so
+ * JSON.parse coerced it to the string "120,98,105,…" and threw a SyntaxError
+ * mid-render — an uncaught error inside React, hence the blank
+ * "Application error" rather than a broken panel.
+ */
+function readPings(raw: unknown): number[] {
+  const onlyNumbers = (arr: unknown[]) => arr.filter((n): n is number => typeof n === "number");
+
+  if (Array.isArray(raw)) return onlyNumbers(raw);
+
+  if (typeof raw === "string" && raw.trim() !== "") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? onlyNumbers(parsed) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
 }
 
 interface TestRun {
@@ -167,10 +196,11 @@ function TestRunsContent() {
     const fetchLatestRun = async () => {
       try {
         const json = await api.get<ApiResponse<TestRun[]>>(`/projects/${currentProject.id}/test-runs`);
+        const runs = asArray<TestRun>(json.data);
 
-        if (json.success && json.data.length > 0) {
-          setTestRuns(json.data); 
-          const latest = json.data[0];
+        if (json.success && runs.length > 0) {
+          setTestRuns(runs);
+          const latest = runs[0];
           
           setIsInitialLoad(false); 
           
@@ -210,7 +240,7 @@ function TestRunsContent() {
   }
 
   const latestRun = testRuns.length > 0 ? testRuns[0] : null;
-  const results = latestRun?.results || [];
+  const results = asArray<TestResult>(latestRun?.results);
 
   const totalTests = latestRun?.totalTests || 0;
   const passed = latestRun?.passed || 0;
@@ -221,6 +251,10 @@ function TestRunsContent() {
   const successRate = totalTests > 0 ? Math.round((passed / totalTests) * 100) : 0;
   const slowestTime = latestRun?.slowestTime || 0;
 
+  // A run that failed before executing anything reports totalTests 0, which
+  // made every share NaN and fed "NaN%" into the conic-gradient below.
+  const share = (n: number) => (totalTests > 0 ? (n / totalTests) * 100 : 0);
+
   let count2xx = 0, count4xx = 0, count5xx = 0, count0 = 0;
   results.forEach(r => {
     if (r.statusCode === 0 || !r.statusCode) count0++;
@@ -229,10 +263,17 @@ function TestRunsContent() {
     else if (r.statusCode >= 500) count5xx++;
   });
 
-  const unstableTarget = results.find(r => !r.consistencyStable) || 
-                         results.reduce((prev, curr) => (prev.responseTimeMs > curr.responseTimeMs) ? prev : curr, results[0]);
-  
-  const targetPings = unstableTarget ? JSON.parse(unstableTarget.consistencyResults || "[]") : [];
+  // Slowest result, or the first unstable one. reduce over an empty list would
+  // throw without the length check — results[0] as a seed is undefined there.
+  const unstableTarget =
+    results.find((r) => !r.consistencyStable) ||
+    (results.length > 0
+      ? results.reduce((prev, curr) =>
+          (prev.responseTimeMs ?? 0) > (curr.responseTimeMs ?? 0) ? prev : curr
+        )
+      : undefined);
+
+  const targetPings = readPings(unstableTarget?.consistencyResults);
 
   const handleRunSuite = async () => {
     if (displayAsRunning) return;
@@ -326,12 +367,13 @@ function TestRunsContent() {
                 <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, borderBottom: "1px solid #d1d5db", width: "100%" }} />
 
                 {results.map((row, i) => {
-                    const heightPercent = slowestTime > 0 ? Math.max((row.responseTimeMs / slowestTime) * 100, 5) : 5;
+                    const rowTime = row.responseTimeMs ?? 0;
+                    const heightPercent = slowestTime > 0 ? Math.max((rowTime / slowestTime) * 100, 5) : 5;
                     const barColor = row.result === "PASS" ? "#10b981" : row.result === "FAIL" ? "#ef4444" : "#f59e0b";
-                    
+
                     return (
-                        <div key={i} title={`${row.endpoint.path}: ${row.responseTimeMs}ms`} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", flex: 1, height: "100%", zIndex: 1 }}>
-                            <span style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", marginBottom: 8 }}>{row.responseTimeMs > 0 ? row.responseTimeMs : "-"}</span>
+                        <div key={i} title={`${row.endpoint?.path ?? "Unknown endpoint"}: ${rowTime}ms`} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", flex: 1, height: "100%", zIndex: 1 }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", marginBottom: 8 }}>{rowTime > 0 ? rowTime : "-"}</span>
                             <div style={{ height: `${heightPercent}%`, width: "100%", maxWidth: 40, backgroundColor: barColor, borderRadius: "4px 4px 0 0", opacity: 0.9, transition: "all 0.4s ease", cursor: "pointer" }}
                                 onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
                                 onMouseLeave={(e) => e.currentTarget.style.opacity = "0.9"}
@@ -362,29 +404,30 @@ function TestRunsContent() {
                 </thead>
                 <tbody>
                     {results.map((row) => {
-                    const methodStyle = getMethodStyle(row.endpoint.method);
+                    const rowTime = row.responseTimeMs ?? 0;
+                    const methodStyle = getMethodStyle(row.endpoint?.method ?? "");
                     const badgeStyle = getBadgeStyle(row.result);
                     const barColor = row.result === "PASS" ? "#10b981" : row.result === "FAIL" ? "#ef4444" : "#f59e0b";
-                    const rowTimeWidth = slowestTime > 0 ? `${Math.max((row.responseTimeMs / slowestTime) * 100, 2)}%` : "0%";
+                    const rowTimeWidth = slowestTime > 0 ? `${Math.max((rowTime / slowestTime) * 100, 2)}%` : "0%";
 
                     return (
                         <tr key={row.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
                         <td style={{ padding: "16px 24px" }}>
                             <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6, backgroundColor: methodStyle.bg, color: methodStyle.text, border: `1px solid ${methodStyle.border}` }}>
-                            {row.endpoint.method}
+                            {row.endpoint?.method ?? "—"}
                             </span>
                         </td>
                         <td style={{ padding: "16px 24px" }}>
-                            <div style={{ fontSize: 14, fontWeight: 500, color: "#111827", fontFamily: "monospace" }}>{row.endpoint.path}</div>
+                            <div style={{ fontSize: 14, fontWeight: 500, color: "#111827", fontFamily: "monospace" }}>{row.endpoint?.path ?? "Unknown endpoint"}</div>
                             {row.errorMessage && <div style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>{row.errorMessage}</div>}
                         </td>
                         <td style={{ padding: "16px 24px", fontSize: 14, fontWeight: 600, color: row.statusCode && row.statusCode >= 500 ? "#ef4444" : row.statusCode && row.statusCode >= 400 ? "#f59e0b" : "#111827" }}>
                             {row.statusCode || "ERR"}
                         </td>
                         <td style={{ padding: "16px 24px" }}>
-                            {row.responseTimeMs > 0 ? (
+                            {rowTime > 0 ? (
                             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                <span style={{ fontSize: 14, fontWeight: 500, color: "#374151", width: 48 }}>{row.responseTimeMs}ms</span>
+                                <span style={{ fontSize: 14, fontWeight: 500, color: "#374151", width: 48 }}>{rowTime}ms</span>
                                 <div style={{ flex: 1, height: 6, backgroundColor: "#f3f4f6", borderRadius: 3, overflow: "hidden" }}>
                                 <div style={{ width: rowTimeWidth, height: "100%", backgroundColor: barColor, borderRadius: 3, transition: "width 0.5s ease" }} />
                                 </div>
@@ -416,7 +459,7 @@ function TestRunsContent() {
                 
                 {/* Dynamic Status Code Distribution */}
                 <div style={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 24, display: "flex", alignItems: "center", gap: 32, boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.03)" }}>
-                <div style={{ position: "relative", width: 80, height: 80, borderRadius: "50%", background: `conic-gradient(#10b981 0% ${(count2xx/totalTests)*100}%, #f59e0b ${(count2xx/totalTests)*100}% ${((count2xx+count4xx)/totalTests)*100}%, #ef4444 ${((count2xx+count4xx)/totalTests)*100}% ${((count2xx+count4xx+count5xx)/totalTests)*100}%, #e5e7eb ${((count2xx+count4xx+count5xx)/totalTests)*100}% 100%)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ position: "relative", width: 80, height: 80, borderRadius: "50%", background: `conic-gradient(#10b981 0% ${share(count2xx)}%, #f59e0b ${share(count2xx)}% ${share(count2xx+count4xx)}%, #ef4444 ${share(count2xx+count4xx)}% ${share(count2xx+count4xx+count5xx)}%, #e5e7eb ${share(count2xx+count4xx+count5xx)}% 100%)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <div style={{ width: 60, height: 60, backgroundColor: "#ffffff", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 700, color: "#111827" }}>
                     {totalTests}
                     </div>
@@ -462,12 +505,12 @@ function TestRunsContent() {
                         )}
                     </div>
                     
-                    <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 16px 0" }}><code style={{ backgroundColor: "#f3f4f6", padding: "2px 6px", borderRadius: 4, color: "#111827" }}>{unstableTarget.endpoint.path}</code> fired 10 times consecutively:</p>
+                    <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 16px 0" }}><code style={{ backgroundColor: "#f3f4f6", padding: "2px 6px", borderRadius: 4, color: "#111827" }}>{unstableTarget.endpoint?.path ?? "Unknown endpoint"}</code> fired 10 times consecutively:</p>
                     
                     <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
                         {targetPings.length > 0 ? targetPings.map((time: number, i: number) => {
                             const isFail = time === 0;
-                            const isSlow = time > unstableTarget.responseTimeMs * 1.5; 
+                            const isSlow = time > (unstableTarget.responseTimeMs ?? 0) * 1.5;
                             const boxColor = isFail ? "#fef2f2" : isSlow ? "#fffbeb" : "#f0fdf4";
                             const borderColor = isFail ? "#fecaca" : isSlow ? "#fde68a" : "#bbf7d0";
                             const textColor = isFail ? "#dc2626" : isSlow ? "#d97706" : "#16a34a";
