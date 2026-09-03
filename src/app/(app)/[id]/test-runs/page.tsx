@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Terminal } from "lucide-react";
+import { ArrowLeft, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Terminal, PlayCircle } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { useProjects } from "@/context/ProjectContext";
 import OverallPerformanceChart from "@/components/OverallPerformanceChart"; 
@@ -65,6 +65,18 @@ interface TestRun {
   slowestTime: number;
   results: TestResult[];
 }
+
+/** A run in one of these states will never change again, so polling can stop. */
+const isTerminal = (run?: TestRun) =>
+  !!run && (run.status === "COMPLETED" || run.status === "FAILED");
+
+/**
+ * How long to keep polling before giving up.
+ *
+ * A worker that dies mid-run leaves the row PENDING for good, and without a
+ * ceiling the page would sit at 99% forever waiting on it.
+ */
+const POLL_TIMEOUT_MS = 2 * 60 * 1000;
 
 const getMethodStyle = (method: string) => {
   switch (method) {
@@ -175,6 +187,13 @@ function TestRunsContent() {
   const [isRunning, setIsRunning] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
+  // The run we are waiting on, and a token that restarts the poll loop.
+  // Triggering a suite has to bump the token: the loop stops itself once a run
+  // reaches a terminal status, so without this it never watches the next one.
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [pollToken, setPollToken] = useState(0);
+  const [pollError, setPollError] = useState<string | null>(null);
+
   const [forceHollywoodDelay, setForceHollywoodDelay] = useState(searchParams?.get("activeRun") === "true");
 
   useEffect(() => {
@@ -187,48 +206,76 @@ function TestRunsContent() {
     }
   }, [forceHollywoodDelay, projectSlugFromUrl]);
 
+  const projectId = currentProject?.id;
+
   useEffect(() => {
-    if (!currentProject) return;
-    
-    let timerId: NodeJS.Timeout;
+    if (!projectId) return;
+
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
     let pollDelay = 2000; // Start at 2 seconds
+    const startedPollingAt = Date.now();
 
-    const fetchLatestRun = async () => {
+    const poll = async () => {
+      if (cancelled) return;
+
       try {
-        const json = await api.get<ApiResponse<TestRun[]>>(`/projects/${currentProject.id}/test-runs`);
-        const runs = asArray<TestRun>(json.data);
+        const json = await api.get<ApiResponse<TestRun[]>>(`/projects/${projectId}/test-runs`);
+        if (cancelled) return;
 
-        if (json.success && runs.length > 0) {
-          setTestRuns(runs);
-          const latest = runs[0];
-          
-          setIsInitialLoad(false); 
-          
-          if (latest.status === "COMPLETED" || latest.status === "FAILED") {
-            setIsRunning(false);
-            return; // Exit the loop entirely
-          } else {
-            setIsRunning(true);
-            // Exponential backoff: increase delay by 1.5x, cap at 10 seconds
-            pollDelay = Math.min(pollDelay * 1.5, 10000);
-            timerId = setTimeout(fetchLatestRun, pollDelay);
-          }
-        } else {
-          setIsInitialLoad(false);
+        const runs = asArray<TestRun>(json.data);
+        setTestRuns(runs);
+        setIsInitialLoad(false);
+
+        // While waiting on a run we just queued, watch that exact run. Watching
+        // runs[0] instead would match the previous, already-finished run and
+        // stop the animation before the new one had even been picked up.
+        const watched = activeRunId ? runs.find((r) => r.id === activeRunId) : runs[0];
+
+        // Nothing to wait for: either this project has never run, or its latest
+        // run is already finished and we did not just start another.
+        if (!activeRunId && (runs.length === 0 || isTerminal(watched))) {
+          setIsRunning(false);
+          return;
         }
+
+        if (isTerminal(watched)) {
+          setIsRunning(false);
+          return;
+        }
+
+        // Still queued, still running, or not yet visible to the API.
+        setIsRunning(true);
       } catch (err) {
+        if (cancelled) return;
         console.error("Failed to fetch runs", err);
         setIsInitialLoad(false);
-        // Retry on failure, but back off slightly to give the server breathing room
-        pollDelay = Math.min(pollDelay * 1.5, 10000);
-        timerId = setTimeout(fetchLatestRun, pollDelay);
+        // Fall through and retry — a blip should not end the loop.
       }
+
+      if (cancelled) return;
+
+      if (Date.now() - startedPollingAt > POLL_TIMEOUT_MS) {
+        setIsRunning(false);
+        setPollError(
+          "This run has not reported back in over two minutes. It may still be going, or the worker may have stopped — reload to check again."
+        );
+        return;
+      }
+
+      // Exponential backoff: increase delay by 1.5x, cap at 10 seconds
+      pollDelay = Math.min(pollDelay * 1.5, 10000);
+      timerId = setTimeout(poll, pollDelay);
     };
 
-    fetchLatestRun();
+    poll();
 
-    return () => clearTimeout(timerId);
-  }, [currentProject]);
+    return () => {
+      cancelled = true;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [projectId, activeRunId, pollToken]);
+
   const displayAsRunning = isRunning || forceHollywoodDelay;
 
   if (!currentProject) {
@@ -277,9 +324,19 @@ function TestRunsContent() {
 
   const handleRunSuite = async () => {
     if (displayAsRunning) return;
+
+    setPollError(null);
     setIsRunning(true);
-    setForceHollywoodDelay(true); 
-    await runAllTests(currentProject.id); 
+    setForceHollywoodDelay(true);
+
+    const newRunId = await runAllTests(currentProject.id);
+
+    // A null id means the trigger was refused — no endpoints configured, or a
+    // run was already in flight. Watching the project's latest run is right in
+    // both cases: the poll settles immediately if nothing new started, and
+    // follows the in-flight one if something had.
+    setActiveRunId(newRunId);
+    setPollToken((token) => token + 1);
   };
 
   return (
@@ -302,14 +359,19 @@ function TestRunsContent() {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
                 <h1 style={{ fontSize: 24, fontWeight: 700, color: "#111827", margin: 0 }}>Test Run Results</h1>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}>{passed} Passed</span>
-                  {failed > 0 && <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}>{failed} Failed</span>}
-                  {warned > 0 && <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#fffbeb", color: "#d97706", border: "1px solid #fde68a" }}>{warned} Warning</span>}
-                </div>
+                {/* Counts describe a run — with none yet they would just read
+                    "0 Passed", which looks like a result rather than an absence. */}
+                {latestRun && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}>{passed} Passed</span>
+                    {failed > 0 && <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}>{failed} Failed</span>}
+                    {warned > 0 && <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#fffbeb", color: "#d97706", border: "1px solid #fde68a" }}>{warned} Warning</span>}
+                  </div>
+                )}
               </div>
               <p style={{ fontSize: 14, color: "#6b7280", margin: 0 }}>
-                Project: <strong>{currentProject.title}</strong> · {totalTests} endpoints tested
+                Project: <strong>{currentProject.title}</strong>
+                {latestRun ? ` · ${totalTests} endpoints tested` : " · No runs yet"}
               </p>
             </div>
           </div>
@@ -328,9 +390,42 @@ function TestRunsContent() {
             onMouseLeave={(e) => { if(!displayAsRunning) e.currentTarget.style.backgroundColor = "#2563eb"; }}
           >
             <RefreshCw size={16} style={{ animation: displayAsRunning ? "spin 1s linear infinite" : "none" }} /> 
-            {displayAsRunning ? "Running Suite..." : "Re-run suite"}
+            {displayAsRunning ? "Running Suite..." : latestRun ? "Re-run suite" : "Run test suite"}
           </button>
         </div>
+
+        {/* ── Polling gave up ── */}
+        {pollError && !displayAsRunning && (
+          <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 12, backgroundColor: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "16px 20px" }}>
+            <AlertTriangle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>Still waiting on this run</div>
+              <div style={{ fontSize: 13, color: "#b45309", marginTop: 2 }}>{pollError}</div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Nothing has ever run here ── */}
+        {!latestRun && !displayAsRunning && (
+          <div style={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "48px 24px", textAlign: "center", boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.03)" }}>
+            <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <PlayCircle size={24} color="#2563eb" />
+            </div>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: "0 0 6px" }}>No test runs yet</h3>
+            <p style={{ fontSize: 14, color: "#6b7280", margin: "0 auto", maxWidth: 420, lineHeight: 1.5 }}>
+              This project has not been tested yet. Run the suite to check every configured
+              endpoint and see health, latency and stability results here.
+            </p>
+            <button
+              onClick={handleRunSuite}
+              style={{ marginTop: 20, display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 16px", backgroundColor: "#2563eb", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, color: "#ffffff", cursor: "pointer", boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)", transition: "background-color 150ms" }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#1d4ed8"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#2563eb"; }}
+            >
+              <PlayCircle size={16} /> Run test suite
+            </button>
+          </div>
+        )}
 
         {/* ── MAIN CONTENT WRAPPER ──────────────────── */}
         {latestRun && (
