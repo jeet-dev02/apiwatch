@@ -71,6 +71,9 @@ export default function Home() {
     activeAlerts: 0, 
     criticalAlerts: 0, 
     warningAlerts: 0,
+    activeIncidents: 0,
+    criticalIncidents: 0,
+    warningIncidents: 0,
     successRate: 0,
     avgResponseTime: 0,
     performanceData: []
@@ -105,7 +108,7 @@ export default function Home() {
         <StatCard title="APIs Monitored" value={totalEndpoints} trendText="Live count" trendDirection="up" icon={<Code2 size={20} color="#16a34a" />} />
         <StatCard title="Avg Health Score" value={`${stats.avgHealthScore}%`} trendText="Global average" trendDirection="up" icon={<Activity size={20} color="#d97706" />} />
         <StatCard title="Test Runs Today" value={stats.apisTodayTested} trendText="Last 24 hours" trendDirection="up" icon={<ShieldAlert size={20} color="#2563eb" />} />
-        <StatCard title="Active Alerts" value={stats.activeAlerts} trendText={`${stats.criticalAlerts} critical · ${stats.warningAlerts} warning`} trendDirection="down" icon={<BellRing size={20} color="#dc2626" />} />
+        <StatCard title="Active Incidents" value={stats.activeIncidents} trendText={`${stats.criticalIncidents} critical · ${stats.warningIncidents} warning`} trendDirection="down" icon={<BellRing size={20} color="#dc2626" />} />
       </div>
 
       {/* --- Project Grid (Top 3) --- */}

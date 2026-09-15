@@ -6,6 +6,8 @@ import { useAuth } from "@/context/AuthContext";
 
 export interface StatefulAlert {
   id: string;
+  /** Shared by the alerts of one outage of a project. See lib/incidents.ts. */
+  incidentId: string;
   project: string;
   issue: string;
   path: string;
@@ -16,10 +18,21 @@ export interface StatefulAlert {
   resolvedAt?: string;
 }
 
+/** GET /api/alerts reports how complete the active list is beside `data`. */
+type AlertsResponse = ApiResponse<StatefulAlert[]> & {
+  activeTotal?: number;
+  truncated?: boolean;
+};
+
 interface AlertContextType {
   alerts: StatefulAlert[];
+  /** How many active alerts the org has — more than `alerts` holds when `truncated`. */
+  activeTotal: number;
+  /** Some active alerts were left out, so counts built from `alerts` are short. */
+  truncated: boolean;
   refreshAlerts: () => Promise<void>;
   resolveAlert: (id: string) => Promise<void>;
+  resolveIncident: (id: string) => Promise<void>;
   resolveAll: () => Promise<void>;
 }
 
@@ -27,17 +40,26 @@ const AlertContext = createContext<AlertContextType | undefined>(undefined);
 
 export function AlertProvider({ children }: { children: ReactNode }) {
   const [alerts, setAlerts] = useState<StatefulAlert[]>([]);
+  const [activeTotal, setActiveTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const { user, loading: authLoading } = useAuth();
 
   // Function to fetch real data from your Fastify backend
   const refreshAlerts = useCallback(async () => {
     try {
-      const json = await api.get<ApiResponse<StatefulAlert[]>>("/alerts");
+      const json = await api.get<AlertsResponse>("/alerts");
 
       if (json.success) {
         // Never let a missing `data` put undefined into state — every consumer
         // calls .filter or .map on this and would take the page down.
-        setAlerts(asArray<StatefulAlert>(json.data));
+        const list = asArray<StatefulAlert>(json.data);
+        setAlerts(list);
+        setTruncated(json.truncated === true);
+        setActiveTotal(
+          typeof json.activeTotal === "number"
+            ? json.activeTotal
+            : list.filter((a) => a.status === "active").length
+        );
       }
     } catch (error) {
       console.error("Failed to fetch real alerts from backend", error);
@@ -53,6 +75,8 @@ export function AlertProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (authLoading || !userId) {
       setAlerts([]);
+      setActiveTotal(0);
+      setTruncated(false);
       return;
     }
 
@@ -71,6 +95,17 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Resolves every active alert of the incident, and the incident, in one
+  // transaction — including alerts left out of a truncated list.
+  const resolveIncident = async (id: string) => {
+    try {
+      await api.patch<ApiResponse<unknown>>(`/incidents/${id}/resolve`);
+      await refreshAlerts();
+    } catch (error) {
+      console.error("Failed to resolve incident", error);
+    }
+  };
+
   // Real API call to resolve all active alerts
   const resolveAll = async () => {
     try {
@@ -82,7 +117,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AlertContext.Provider value={{ alerts, refreshAlerts, resolveAlert, resolveAll }}>
+    <AlertContext.Provider value={{ alerts, activeTotal, truncated, refreshAlerts, resolveAlert, resolveIncident, resolveAll }}>
       {children}
     </AlertContext.Provider>
   );
