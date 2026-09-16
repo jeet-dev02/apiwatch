@@ -1,4 +1,5 @@
 import type { StatefulAlert } from "@/context/AlertContext";
+import type { HttpMethod } from "@/context/ProjectContext";
 
 /**
  * Incidents, as the alerts page and the dashboard panel show them.
@@ -44,27 +45,62 @@ export function groupByIncident(alerts: StatefulAlert[]): AlertIncident[] {
   return Array.from(byId.values());
 }
 
+/** One endpoint of an incident, as the summary lines list it. */
+export interface IncidentEndpoint {
+  /** What the endpoint is deduped by — see `alertEndpointKey`. */
+  key: string;
+  path: string;
+  /** Null whenever the alert has no endpoint, so nothing is shown for it. */
+  method: HttpMethod | null;
+}
+
 /**
- * The incident's distinct paths, newest first. Alerts are keyed by path, and a
- * resolved incident can hold two alerts for one path if the endpoint failed,
- * recovered and failed again, so this — not `alerts.length` — is the count of
- * affected endpoints.
+ * What identifies the endpoint an alert was raised for.
+ *
+ * Alerts belong to an endpoint, not a path: two endpoints on one path —
+ * different methods, different expected status — raise separate alerts, and
+ * keying on the path would collapse them into one.
+ *
+ * An alert whose endpoint has been deleted, or that the migration to endpoint
+ * ids could not match to one, has no `endpointId`. It is still a real alert, so
+ * it falls back to its own id: it cannot be deduped against the other alerts of
+ * its endpoint, but it shows, and shows once.
  */
-export function incidentPaths(incident: AlertIncident): string[] {
-  return Array.from(new Set(incident.alerts.map((a) => a.path)));
+export function alertEndpointKey(alert: StatefulAlert): string {
+  return alert.endpointId ?? alert.id;
+}
+
+/**
+ * The incident's distinct endpoints, newest first. An incident can hold two
+ * alerts for one endpoint — a resolved one that failed, recovered and failed
+ * again — so this, not `alerts.length`, is the count of affected endpoints.
+ */
+export function incidentEndpoints(incident: AlertIncident): IncidentEndpoint[] {
+  const byKey = new Map<string, IncidentEndpoint>();
+
+  for (const alert of incident.alerts) {
+    const key = alertEndpointKey(alert);
+    if (!byKey.has(key)) byKey.set(key, { key, path: alert.path, method: alert.method });
+  }
+
+  return Array.from(byKey.values());
 }
 
 /**
  * The endpoints of an open incident that recovered while the rest of its
- * outage is still failing: its resolved alerts, one per path, newest first,
- * leaving out any path that is failing again. `resolved` is capped at
+ * outage is still failing: its resolved alerts, one per endpoint, newest first,
+ * leaving out any endpoint that is failing again. `resolved` is capped at
  * RESOLVED_ALERTS_LIMIT, so at the limit this can miss older recoveries.
+ *
+ * An alert with no endpoint has nothing to match a failing alert against, so it
+ * is listed as recovered even when the same endpoint appears again below it.
  */
 export function recoveredAlerts(incident: AlertIncident, resolved: StatefulAlert[]): StatefulAlert[] {
-  const seen = new Set(incidentPaths(incident));
+  const seen = new Set(incidentEndpoints(incident).map((endpoint) => endpoint.key));
   return resolved.filter((alert) => {
-    if (alert.incidentId !== incident.id || seen.has(alert.path)) return false;
-    seen.add(alert.path);
+    const key = alertEndpointKey(alert);
+    if (alert.incidentId !== incident.id || seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

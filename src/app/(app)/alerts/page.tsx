@@ -4,7 +4,8 @@ import { useState } from "react";
 // FIXED: Removed the unused 'Filter' import
 import { BellRing, CheckCircle2, Search, X, Check, Activity, Clock, FileCode2, ChevronRight, Loader2, AlertTriangle } from "lucide-react";
 import { useAlerts, StatefulAlert } from "@/context/AlertContext";
-import { groupByIncident, incidentPaths, recoveredAlerts, sharedIssue, RESOLVED_ALERTS_LIMIT } from "@/lib/incidents";
+import { groupByIncident, incidentEndpoints, recoveredAlerts, sharedIssue, RESOLVED_ALERTS_LIMIT } from "@/lib/incidents";
+import MethodBadge from "@/components/MethodBadge";
 
 export default function AlertsPage() {
   const { alerts, activeTotal, truncated, resolveAlert, resolveIncident, resolveAll } = useAlerts();
@@ -153,7 +154,7 @@ export default function AlertsPage() {
               const isExpanded = expandedIds.has(incident.id);
               const isResolving = resolvingId === incident.id;
               const bg = activeTab === "resolved" ? "#f9fafb" : (isCritical ? "#fef2f2" : "#fffbeb");
-              const paths = incidentPaths(incident);
+              const endpoints = incidentEndpoints(incident);
               const issue = sharedIssue(incident);
               const recovered = isExpanded && activeTab === "active" ? recoveredAlerts(incident, resolvedAlerts) : [];
               // Endpoints recover one run at a time, so only a time they all share describes the incident.
@@ -173,10 +174,11 @@ export default function AlertsPage() {
                           <span style={{ fontSize: 14, fontWeight: 600, color: activeTab === "resolved" ? "#9ca3af" : (isCritical ? "#dc2626" : "#d97706") }}>{issue ?? "Multiple issues"}</span>
                         </span>
                         <span style={{ display: "block", fontSize: 13, color: "#6b7280", paddingLeft: activeTab === "active" ? 16 : 0 }}>
-                          {paths.length} {paths.length === 1 ? "endpoint" : "endpoints"} {activeTab === "active" ? "failing" : "affected"}
+                          {endpoints.length} {endpoints.length === 1 ? "endpoint" : "endpoints"} {activeTab === "active" ? "failing" : "affected"}
                           <span style={{ margin: "0 8px", color: "#d1d5db" }}>—</span>
-                          <span style={{ fontFamily: "monospace", backgroundColor: "#ffffff80", padding: "2px 6px", borderRadius: 4 }}>{paths[0]}</span>
-                          {paths.length > 1 && ` +${paths.length - 1} more`}
+                          <MethodBadge method={endpoints[0].method} />
+                          <span style={{ fontFamily: "monospace", backgroundColor: "#ffffff80", padding: "2px 6px", borderRadius: 4 }}>{endpoints[0].path}</span>
+                          {endpoints.length > 1 && ` +${endpoints.length - 1} more`}
                         </span>
                       </span>
                     </button>
@@ -207,6 +209,7 @@ export default function AlertsPage() {
                           <div key={alert.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "12px 16px", backgroundColor: isRecovered ? "#f9fafb" : "#ffffff", border: "1px solid #e5e7eb", borderRadius: 8 }}>
                             <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: isRecovered ? "#9ca3af" : "#6b7280" }}>
                               {isRecovered && <span style={{ marginRight: 8, fontSize: 11, fontWeight: 600, color: "#059669", backgroundColor: "#ecfdf5", border: "1px solid #a7f3d0", padding: "1px 6px", borderRadius: 4 }}>Recovered</span>}
+                              <MethodBadge method={alert.method} muted={isRecovered} />
                               <span style={{ fontFamily: "monospace", color: isRecovered ? "#6b7280" : "#111827", backgroundColor: "#f3f4f6", padding: "2px 6px", borderRadius: 4 }}>{alert.path}</span>
                               {alert.issue !== issue && <span style={{ marginLeft: 8, fontWeight: 600, color: alert.status === "resolved" ? "#9ca3af" : (alert.type === "critical" ? "#dc2626" : "#d97706") }}>{alert.issue}</span>}
                               <span style={{ margin: "0 8px", color: "#d1d5db" }}>—</span>
@@ -274,13 +277,15 @@ export default function AlertsPage() {
               <div>
                 <h3 style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>Error Summary</h3>
                 <div style={{ fontSize: 18, fontWeight: 600, color: "#111827", marginBottom: 4 }}>{selectedAlert.issue}</div>
-                <div style={{ fontSize: 14, color: "#4b5563" }}>Endpoint: <span style={{ fontFamily: "monospace", color: "#2563eb", backgroundColor: "#eff6ff", padding: "2px 4px", borderRadius: 4 }}>{selectedAlert.path}</span></div>
+                <div style={{ fontSize: 14, color: "#4b5563" }}>Endpoint: <MethodBadge method={selectedAlert.method} /><span style={{ fontFamily: "monospace", color: "#2563eb", backgroundColor: "#eff6ff", padding: "2px 4px", borderRadius: 4 }}>{selectedAlert.path}</span></div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div style={{ padding: 16, backgroundColor: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb" }}>
                   <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={14} /> Expected</div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#16a34a" }}>Status: 200 OK</div>
+                  {/* GET /api/alerts doesn’t send the endpoint’s expected status, and it
+                      isn’t 200 for every endpoint — so there is nothing to state here. */}
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "#9ca3af" }}>Not reported</div>
                 </div>
                 <div style={{ padding: 16, backgroundColor: "#fef2f2", borderRadius: 8, border: "1px solid #fee2e2" }}>
                   <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><X size={14} /> Actual</div>

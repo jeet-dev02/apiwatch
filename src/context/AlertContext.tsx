@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
 import { api, ApiResponse, asArray } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import type { HttpMethod } from "@/context/ProjectContext";
 
 export interface StatefulAlert {
   id: string;
@@ -11,6 +12,14 @@ export interface StatefulAlert {
   project: string;
   issue: string;
   path: string;
+  /**
+   * The endpoint that raised it. Null once that endpoint is deleted, and on
+   * alerts the backend's migration could not match to one — those alerts are
+   * real and still shown, they just cannot be deduped by endpoint.
+   */
+  endpointId: string | null;
+  /** The endpoint's method. Null exactly when `endpointId` is. */
+  method: HttpMethod | null;
   details: string;
   time: string;
   type: "critical" | "warning";

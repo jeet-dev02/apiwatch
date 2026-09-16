@@ -5,7 +5,8 @@ import { useState } from "react";
 import { useAlerts } from "@/context/AlertContext";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useNavigation } from "@/context/NavigationContext"; // ✨ Import Global Lock
-import { groupByIncident, incidentPaths, sharedIssue } from "@/lib/incidents";
+import { groupByIncident, incidentEndpoints, sharedIssue } from "@/lib/incidents";
+import MethodBadge from "@/components/MethodBadge";
 
 const severityConfig = {
   critical: { bg: "#fef2f2", dot: "#dc2626", border: "#fee2e2" },
@@ -72,7 +73,7 @@ export default function ActiveAlertsPanel() {
         {activeIncidents.map((incident) => {
           const config = severityConfig[incident.type];
           const isResolving = resolvingId === incident.id;
-          const paths = incidentPaths(incident);
+          const endpoints = incidentEndpoints(incident);
 
           return (
             <div key={incident.id} style={{ backgroundColor: config.bg, border: `1px solid ${config.border}`, borderRadius: 8, padding: "16px", display: "flex", alignItems: "flex-start", gap: 12, opacity: isResolving || isNavigating ? 0.6 : 1, transition: "opacity 0.2s", pointerEvents: isNavigating ? "none" : "auto" }}>
@@ -83,7 +84,14 @@ export default function ActiveAlertsPanel() {
                   {incident.project} <span style={{ color: "#9ca3af", fontWeight: 400, margin: "0 4px" }}>—</span> {sharedIssue(incident) ?? "Multiple issues"}
                 </div>
                 <div style={{ fontSize: 13, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {paths.length} {paths.length === 1 ? "endpoint" : "endpoints"} failing <span style={{ color: "#d1d5db", margin: "0 4px" }}>—</span> {paths.join(", ")}
+                  {endpoints.length} {endpoints.length === 1 ? "endpoint" : "endpoints"} failing <span style={{ color: "#d1d5db", margin: "0 4px" }}>—</span>
+                  {endpoints.map((endpoint, i) => (
+                    <span key={endpoint.key}>
+                      {i > 0 && ", "}
+                      <MethodBadge method={endpoint.method} />
+                      {endpoint.path}
+                    </span>
+                  ))}
                 </div>
               </div>
 
