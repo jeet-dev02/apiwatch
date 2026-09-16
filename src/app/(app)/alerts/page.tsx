@@ -46,6 +46,11 @@ export default function AlertsPage() {
     return matchesSearch && matchesProject && matchesSeverity;
   });
 
+  // The issue line opens with the status the pings got back ("405 Unexpected
+  // Status"), and nothing else on an alert carries it — so it is read from
+  // there, but only when it really is a status code. Never guessed.
+  const actualStatus = selectedAlert ? /^\d{3}\b/.exec(selectedAlert.issue)?.[0] ?? null : null;
+
   const criticalCount = activeIncidents.filter(i => i.type === "critical").length;
   const warningCount = activeIncidents.length - criticalCount;
 
@@ -289,7 +294,9 @@ export default function AlertsPage() {
                 </div>
                 <div style={{ padding: 16, backgroundColor: "#fef2f2", borderRadius: 8, border: "1px solid #fee2e2" }}>
                   <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><X size={14} /> Actual</div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#dc2626" }}>Status: {selectedAlert.issue.split(" ")[0] || "500"}</div>
+                  {actualStatus
+                    ? <div style={{ fontSize: 15, fontWeight: 600, color: "#dc2626" }}>Status: {actualStatus}</div>
+                    : <div style={{ fontSize: 15, fontWeight: 600, color: "#9ca3af" }}>Not reported</div>}
                 </div>
               </div>
 
@@ -297,7 +304,8 @@ export default function AlertsPage() {
                 <h3 style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}><Clock size={14} /> Request Metrics</h3>
                 <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #e5e7eb", paddingBottom: 8, marginBottom: 8 }}>
                   <span style={{ fontSize: 14, color: "#4b5563" }}>Latency</span>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>1,402 ms</span>
+                  {/* No latency is sent with an alert. 1,402 ms stood here for every one. */}
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#9ca3af" }}>Not reported</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #e5e7eb", paddingBottom: 8 }}>
                   <span style={{ fontSize: 14, color: "#4b5563" }}>Time of Failure</span>
@@ -307,18 +315,10 @@ export default function AlertsPage() {
 
               <div>
                 <h3 style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}><FileCode2 size={14} /> Response Body</h3>
-                <div style={{ backgroundColor: "#1f2937", borderRadius: 8, padding: 16, overflowX: "auto" }}>
-                  <pre style={{ margin: 0, color: "#e5e7eb", fontSize: 13, fontFamily: "monospace", lineHeight: 1.5 }}>
-{`{
-  "success": false,
-  "error": {
-    "code": "${selectedAlert.issue.split(" ")[0] || "ERROR"}",
-    "message": "${selectedAlert.details}",
-    "timestamp": "${new Date().toISOString()}"
-  }
-}`}
-                  </pre>
-                </div>
+                {/* Nothing on an alert carries the body the ping got back. What stood
+                    here was built out of `issue` and `details` and stamped with the
+                    time the drawer opened, which read as a captured response. */}
+                <div style={{ fontSize: 15, fontWeight: 600, color: "#9ca3af", padding: 16, backgroundColor: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb" }}>Not reported</div>
               </div>
 
             </div>
