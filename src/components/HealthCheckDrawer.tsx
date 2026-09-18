@@ -1,9 +1,11 @@
 "use client";
 
-import { X, Play, Activity, ServerCrash } from "lucide-react";
+import { X, Play, Activity, ServerCrash, AlertTriangle } from "lucide-react";
 import { Endpoint, HttpMethod, useProjects } from "@/context/ProjectContext";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { api, ApiResponse } from "@/lib/api";
+import { Environment, emptyEnvironment, normaliseEnvironment, unresolved, usageSummary } from "@/lib/environment";
 
 interface HealthCheckDrawerProps {
   isOpen: boolean;
@@ -18,6 +20,33 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
   const projectSlug = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 
   const { projects, runAllTests } = useProjects();
+  const currentProject = projects.find(p => p.title === projectName);
+  const projectId = currentProject?.id;
+
+  const [environment, setEnvironment] = useState<Environment>(emptyEnvironment);
+
+  /**
+   * An unset {{placeholder}} is sent literally, and the run that follows fails
+   * in a way that looks like a broken endpoint rather than a missing value.
+   * Say so here, where the suite is about to be launched.
+   */
+  useEffect(() => {
+    if (!isOpen || !projectId) return;
+
+    let cancelled = false;
+    setEnvironment(emptyEnvironment);
+
+    api
+      .get<ApiResponse<unknown>>(`/projects/${projectId}/environment`)
+      .then((json) => { if (!cancelled) setEnvironment(normaliseEnvironment(json.data)); })
+      // Never block the run on this: it is a warning, and a failed read just
+      // means we have nothing to warn about.
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [isOpen, projectId]);
+
+  const missing = unresolved(environment);
 
   if (!isOpen) return null;
 
@@ -32,7 +61,6 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
   };
 
   const handleRunSuite = async () => {
-    const currentProject = projects.find(p => p.title === projectName);
     if (!currentProject) return;
 
     setIsRunning(true);
@@ -102,6 +130,26 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
         {/* Action Footer */}
         {endpoints.length > 0 && (
           <div style={{ padding: "24px", borderTop: "1px solid #e5e7eb", backgroundColor: "#fafafa" }}>
+            {missing.length > 0 && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", marginBottom: 16, backgroundColor: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8 }}>
+                <AlertTriangle size={16} color="#d97706" style={{ flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 13, color: "#92400e", lineHeight: 1.5, minWidth: 0 }}>
+                  <strong style={{ display: "block", marginBottom: 4 }}>
+                    {missing.length} unresolved {missing.length === 1 ? "placeholder" : "placeholders"}
+                  </strong>
+                  {missing.slice(0, 3).map((placeholder) => (
+                    <div key={placeholder.name} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <code style={{ fontFamily: "monospace", fontWeight: 600 }}>{`{{${placeholder.name}}}`}</code>
+                      {" · "}{usageSummary(placeholder.usedBy.length)}
+                    </div>
+                  ))}
+                  {missing.length > 3 && <div>and {missing.length - 3} more</div>}
+                  <div style={{ marginTop: 6, color: "#b45309" }}>
+                    These are sent literally. Set them in Manage APIs → Environment first.
+                  </div>
+                </div>
+              </div>
+            )}
             <button
               onClick={handleRunSuite}
               disabled={isRunning}

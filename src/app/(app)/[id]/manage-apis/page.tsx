@@ -1,13 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Plus, Play, Save, Trash2, Settings2, ArrowLeft, Check, AlertCircle, UploadCloud, PenLine, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Plus, Play, Save, Trash2, Settings2, ArrowLeft, Check, AlertCircle, AlertTriangle, UploadCloud, PenLine, Loader2, Braces } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation"; 
+import { useParams } from "next/navigation";
 import { useProjects, Endpoint, HttpMethod } from "@/context/ProjectContext";
 import PageSkeleton from "@/components/ui/PageSkeleton";
+import EnvironmentDrawer from "@/components/EnvironmentDrawer";
 import Editor from "@monaco-editor/react";
 import { api, ApiResponse, UnauthorizedError, asArray } from "@/lib/api";
+import {
+  Environment,
+  emptyEnvironment,
+  endpointPlaceholders,
+  normaliseEnvironment,
+  stripPlaceholders,
+  unresolved,
+} from "@/lib/environment";
 
 const emptyEndpoint: Endpoint = {
   id: "new", 
@@ -58,6 +67,11 @@ export default function ApiManagerPage() {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
 
+  const [environment, setEnvironment] = useState<Environment>(emptyEnvironment);
+  const [envLoading, setEnvLoading] = useState(true);
+  const [envError, setEnvError] = useState<string | null>(null);
+  const [showEnvDrawer, setShowEnvDrawer] = useState(false);
+
   useEffect(() => {
     if (currentProject) {
       // endpoints drives .length and .map below, so it has to be a list even
@@ -65,6 +79,36 @@ export default function ApiManagerPage() {
       setEndpoints(asArray<Endpoint>(currentProject.endpoints));
     }
   }, [currentProject?.endpoints]);
+
+  const projectId = currentProject?.id;
+
+  /**
+   * Placeholders are derived from the endpoints, so this has to be re-read
+   * after anything that rewrites them — an import especially, which is what
+   * introduces most of them in the first place.
+   */
+  const loadEnvironment = useCallback(async () => {
+    if (!projectId) return;
+
+    setEnvLoading(true);
+    try {
+      const json = await api.get<ApiResponse<unknown>>(`/projects/${projectId}/environment`);
+      setEnvironment(normaliseEnvironment(json.data));
+      setEnvError(null);
+    } catch (error) {
+      // A 401 is already redirecting; anything else leaves the badge absent
+      // rather than claiming zero unresolved placeholders, which would be a
+      // lie in exactly the case this feature exists for.
+      if (!(error instanceof UnauthorizedError)) setEnvError((error as Error).message);
+      setEnvironment(emptyEnvironment);
+    } finally {
+      setEnvLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    loadEnvironment();
+  }, [loadEnvironment]);
 
   if (!currentProject) {
     return <PageSkeleton />;
@@ -77,8 +121,11 @@ export default function ApiManagerPage() {
     if (!formData.url.trim()) {
       errors.url = "URL is required";
       isValid = false;
-    } else if (formData.url.includes("{") || formData.url.includes("}")) {
-      errors.url = "Please replace bracketed variables (e.g., {petId}) with actual test values.";
+    } else if (/[{}]/.test(stripPlaceholders(formData.url))) {
+      // {{petId}} is legitimate now — it resolves against the project's
+      // environment variables at request time. A bare {petId} is still what a
+      // Swagger import leaves behind untouched, and nothing fills those.
+      errors.url = "Please replace bracketed variables (e.g. {petId}) with a {{variable}} or an actual test value.";
       isValid = false;
     } else {
       try {
@@ -115,12 +162,26 @@ export default function ApiManagerPage() {
 
   const { isValid, errors } = validateForm();
 
+  const unresolvedCount = unresolved(environment).length;
+
+  // Read off the form rather than off the last /environment response, so a
+  // placeholder typed a second ago warns before it has ever been saved.
+  const unsetInForm = endpointPlaceholders(formData).filter(
+    (name) => !Object.prototype.hasOwnProperty.call(environment.variables, name)
+  );
+
   const handleSelect = (endpoint: Endpoint) => {
     setIsManualMode(false);
     setActiveId(endpoint.id);
     setFormData(endpoint);
-    setTestResult(null); 
+    setTestResult(null);
     setActiveTab("Request");
+  };
+
+  /** Jump to an endpoint named in the environment drawer's usage list. */
+  const handleSelectById = (endpointId: string) => {
+    const endpoint = endpoints.find((ep) => ep.id === endpointId);
+    if (endpoint) handleSelect(endpoint);
   };
 
   const handleDeleteEndpoint = async () => {
@@ -134,6 +195,7 @@ export default function ApiManagerPage() {
 
       const newEndpoints = endpoints.filter(ep => ep.id !== activeId);
       setEndpoints(newEndpoints);
+      loadEnvironment();
       if (newEndpoints.length > 0) {
         handleSelect(newEndpoints[0]);
       } else {
@@ -164,6 +226,7 @@ export default function ApiManagerPage() {
     if (success) {
       const updatedEndpoints = endpoints.map((ep) => ep.id === formData.id ? formData : ep);
       setEndpoints(updatedEndpoints);
+      loadEnvironment();
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
     }
@@ -179,6 +242,8 @@ export default function ApiManagerPage() {
       setIsTesting(false);
       return; 
     }
+
+    loadEnvironment();
 
     try {
       const result = await testEndpoint(currentProject.id, formData.id as string);
@@ -199,6 +264,7 @@ export default function ApiManagerPage() {
     await addEndpoint(currentProject.id, formData);
     const newEndpointList = [...endpoints, formData];
     setEndpoints(newEndpointList);
+    loadEnvironment();
     setIsManualMode(false);
     setSaveStatus("saved");
     setTimeout(() => setSaveStatus("idle"), 2000);
@@ -218,6 +284,9 @@ export default function ApiManagerPage() {
       }
 
       await importSwagger(currentProject.id, importUrl.trim(), autoExtractedBaseUrl);
+
+      // An import is what fills a project with {{placeholders}} to begin with.
+      loadEnvironment();
       
       setIsImporting(false);
       setShowImportBox(false);
@@ -278,6 +347,29 @@ export default function ApiManagerPage() {
             Project: <strong style={{color: "#111827"}}>{currentProject.title}</strong> · {endpoints.length} endpoints configured
           </p>
         </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Project-scoped, unlike the per-endpoint tabs below — so it sits up
+            here with the project name, and carries the unresolved count so the
+            warning is visible without opening anything. */}
+        <button
+          onClick={() => setShowEnvDrawer(true)}
+          title="Project environment variables"
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", fontSize: 13, fontWeight: 600, color: unresolvedCount > 0 ? "#b45309" : "#374151", backgroundColor: unresolvedCount > 0 ? "#fffbeb" : "#ffffff", border: `1px solid ${unresolvedCount > 0 ? "#fde68a" : "#d1d5db"}`, borderRadius: 8, cursor: "pointer", transition: "all 0.2s" }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = unresolvedCount > 0 ? "#fef3c7" : "#f9fafb"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = unresolvedCount > 0 ? "#fffbeb" : "#ffffff"; }}
+        >
+          <Braces size={16} />
+          Environment
+          {envLoading ? (
+            <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: "#9ca3af" }} />
+          ) : unresolvedCount > 0 ? (
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#ffffff", backgroundColor: "#d97706", borderRadius: 10, padding: "1px 7px" }}>
+              {unresolvedCount} unset
+            </span>
+          ) : null}
+        </button>
       </div>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -593,6 +685,24 @@ export default function ApiManagerPage() {
                   </div>
                 )}
 
+                {/* Deliberately not a validation error: the request is still
+                    saveable and runnable, it just will not resolve. */}
+                {unsetInForm.length > 0 && (
+                  <button
+                    onClick={() => setShowEnvDrawer(true)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12, padding: "6px 10px", color: "#b45309", backgroundColor: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: "pointer", transition: "background 0.2s", textAlign: "left" }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#fef3c7"}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#fffbeb"}
+                  >
+                    <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+                    <span>
+                      <strong style={{ fontFamily: "monospace" }}>{`{{${unsetInForm[0]}}}`}</strong>
+                      {unsetInForm.length > 1 && ` and ${unsetInForm.length - 1} other${unsetInForm.length > 2 ? "s" : ""}`}
+                      {unsetInForm.length > 1 ? " are" : " is"} not set — {unsetInForm.length > 1 ? "they" : "it"} will be sent literally
+                    </span>
+                  </button>
+                )}
+
                 <div style={{ flex: 1 }}></div>
 
                 {isCreating ? (
@@ -620,6 +730,19 @@ export default function ApiManagerPage() {
 
         </div>
       </div>
+
+      <EnvironmentDrawer
+        isOpen={showEnvDrawer}
+        onClose={() => setShowEnvDrawer(false)}
+        projectId={currentProject.id}
+        projectName={currentProject.title}
+        environment={environment}
+        isLoading={envLoading}
+        loadError={envError}
+        onSaved={loadEnvironment}
+        onSelectEndpoint={handleSelectById}
+      />
+
       <style dangerouslySetInnerHTML={{ __html: `@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}} />
     </div>
   );
