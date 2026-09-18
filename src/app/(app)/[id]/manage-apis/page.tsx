@@ -13,6 +13,7 @@ import {
   Environment,
   emptyEnvironment,
   endpointPlaceholders,
+  isSet,
   normaliseEnvironment,
   stripPlaceholders,
   unresolved,
@@ -167,7 +168,7 @@ export default function ApiManagerPage() {
   // Read off the form rather than off the last /environment response, so a
   // placeholder typed a second ago warns before it has ever been saved.
   const unsetInForm = endpointPlaceholders(formData).filter(
-    (name) => !Object.prototype.hasOwnProperty.call(environment.variables, name)
+    (name) => !isSet(environment, name)
   );
 
   const handleSelect = (endpoint: Endpoint) => {

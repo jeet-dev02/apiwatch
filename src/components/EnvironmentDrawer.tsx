@@ -6,12 +6,19 @@ import { X, Plus, Trash2, Loader2, Check, AlertTriangle, ChevronRight, ChevronDo
 import { api, ApiResponse, UnauthorizedError } from "@/lib/api";
 import {
   Environment,
-  MAX_KEYS,
-  MAX_VALUE_BYTES,
-  byteLength,
-  siteLabel,
+  EnvironmentPatch,
+  MAX_KEYS_PER_REQUEST,
+  MAX_KEY_LENGTH,
+  MAX_SET_CHARS,
+  MAX_VALUE_CHARS,
+  displayValue,
+  isEmptyPatch,
+  parseValue,
+  patchSize,
+  serialisedLength,
   unresolved,
   usageSummary,
+  usedNames,
 } from "@/lib/environment";
 
 interface EnvironmentDrawerProps {
@@ -31,13 +38,14 @@ interface EnvironmentDrawerProps {
 interface Row {
   rowId: string;
   key: string;
-  value: string;
+  /** What is in the input. Seeded from displayValue of the stored value. */
+  text: string;
+  /** The stored value this row was seeded from, for type-preserving edits. */
+  originalValue: unknown;
 }
 
 let rowSeq = 0;
 const nextRowId = () => `row-${rowSeq++}`;
-
-const KEY_RE = /^[A-Za-z0-9_.-]+$/;
 
 const methodColors = (method: string) => {
   switch (method) {
@@ -76,26 +84,56 @@ export default function EnvironmentDrawer({
   // background refetch would wipe what is being typed.
   useEffect(() => {
     if (!isOpen) return;
-    setRows(Object.entries(saved).map(([key, value]) => ({ rowId: nextRowId(), key, value })));
+    setRows(
+      saved.map((variable) => ({
+        rowId: nextRowId(),
+        key: variable.key,
+        text: displayValue(variable.value),
+        originalValue: variable.value,
+      }))
+    );
     setSaveError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, saved]);
 
-  const trimmedRows = rows.map((row) => ({ ...row, key: row.key.trim() }));
-  const named = trimmedRows.filter((row) => row.key !== "");
+  // Keys are NOT trimmed. The backend's placeholder pattern does not trim
+  // either, so `{{ petId }}` genuinely needs a key named " petId " — trimming
+  // here would make that name impossible to set from this screen.
+  const named = rows.filter((row) => row.key !== "");
+
+  /** Only what actually changed: PATCH merges, so untouched keys stay put. */
+  const patch: EnvironmentPatch = (() => {
+    const set: Record<string, unknown> = {};
+
+    for (const row of named) {
+      const value = parseValue(row.text, row.originalValue);
+      const existing = saved.find((variable) => variable.key === row.key);
+
+      // Compared as JSON text: the value may be an object, and this is the
+      // same comparison the backend's diffEnvironment makes.
+      if (!existing || JSON.stringify(existing.value) !== JSON.stringify(value)) {
+        set[row.key] = value;
+      }
+    }
+
+    // A key dropped from the draft — including one renamed, which is a remove
+    // of the old name plus a set of the new.
+    const remove = saved
+      .map((variable) => variable.key)
+      .filter((key) => !named.some((row) => row.key === key));
+
+    return { set, remove };
+  })();
 
   const problems = (() => {
     const list: string[] = [];
 
-    const unnamed = trimmedRows.find((row) => row.key === "" && row.value !== "");
-    if (unnamed) list.push("Every value needs a name.");
-
-    const badKey = named.find((row) => !KEY_RE.test(row.key));
-    if (badKey) {
-      list.push(
-        `"${badKey.key}" cannot be used as a name — a {{placeholder}} can only contain letters, numbers, dots, dashes and underscores.`
-      );
+    if (rows.some((row) => row.key === "" && row.text !== "")) {
+      list.push("Every value needs a name.");
     }
+
+    const longKey = named.find((row) => row.key.length > MAX_KEY_LENGTH);
+    if (longKey) list.push(`A name can be ${MAX_KEY_LENGTH} characters; "${longKey.key.slice(0, 40)}…" is longer.`);
 
     const seen = new Set<string>();
     for (const row of named) {
@@ -106,36 +144,32 @@ export default function EnvironmentDrawer({
       seen.add(row.key);
     }
 
-    const oversized = named.find((row) => byteLength(row.value) > MAX_VALUE_BYTES);
-    if (oversized) list.push(`"${oversized.key}" is over the 8KB limit for a value.`);
+    const oversized = Object.entries(patch.set).find(
+      ([, value]) => serialisedLength(value) > MAX_VALUE_CHARS
+    );
+    if (oversized) {
+      list.push(`"${oversized[0]}" is over the ${MAX_VALUE_CHARS.toLocaleString()} character limit for a value.`);
+    }
 
-    if (named.length > MAX_KEYS) list.push(`A project can hold ${MAX_KEYS} variables; this is ${named.length}.`);
+    if (Object.keys(patch.set).length > MAX_KEYS_PER_REQUEST) {
+      list.push(`At most ${MAX_KEYS_PER_REQUEST} values can be saved at once; this is ${Object.keys(patch.set).length}.`);
+    }
+
+    if (patch.remove.length > MAX_KEYS_PER_REQUEST) {
+      list.push(`At most ${MAX_KEYS_PER_REQUEST} values can be removed at once; this is ${patch.remove.length}.`);
+    }
+
+    if (JSON.stringify(patch.set).length > MAX_SET_CHARS) {
+      list.push(`These values come to more than ${MAX_SET_CHARS.toLocaleString()} characters in total.`);
+    }
 
     return list;
   })();
 
-  /** Only what actually changed: merge semantics mean untouched keys stay put. */
-  const patch = (() => {
-    const next: Record<string, string | null> = {};
-
-    for (const row of named) {
-      if (!Object.prototype.hasOwnProperty.call(saved, row.key) || saved[row.key] !== row.value) {
-        next[row.key] = row.value;
-      }
-    }
-
-    // A key that was dropped from the draft — including one renamed, which is
-    // a delete of the old name plus a set of the new.
-    for (const key of Object.keys(saved)) {
-      if (!named.some((row) => row.key === key)) next[key] = null;
-    }
-
-    return next;
-  })();
-
-  const isDirty = Object.keys(patch).length > 0;
+  const isDirty = !isEmptyPatch(patch);
   const missing = unresolved(environment);
-  const hasData = environment.placeholders.length > 0 || Object.keys(saved).length > 0;
+  const referenced = usedNames(environment);
+  const hasData = environment.endpoints.length > 0 || saved.length > 0;
 
   const handleClose = () => {
     if (isDirty && !window.confirm("Discard the unsaved changes to these variables?")) return;
@@ -143,14 +177,16 @@ export default function EnvironmentDrawer({
   };
 
   const addRow = (key = "") => {
-    const existing = rows.find((row) => row.key.trim() === key && key !== "");
+    const existing = rows.find((row) => row.key === key && key !== "");
     if (existing) {
       focusRef.current = existing.rowId;
       document.getElementById(`env-value-${existing.rowId}`)?.focus();
       return;
     }
 
-    const row = { rowId: nextRowId(), key, value: "" };
+    // A brand-new row has no stored value behind it, so its text is taken as
+    // the string it looks like rather than parsed as JSON.
+    const row = { rowId: nextRowId(), key, text: "", originalValue: "" };
     focusRef.current = row.rowId;
     setRows((prev) => [...prev, row]);
   };
@@ -166,7 +202,7 @@ export default function EnvironmentDrawer({
     input?.scrollIntoView({ block: "center" });
   }, [rows]);
 
-  const updateRow = (rowId: string, field: "key" | "value", value: string) => {
+  const updateRow = (rowId: string, field: "key" | "text", value: string) => {
     setRows((prev) => prev.map((row) => (row.rowId === rowId ? { ...row, [field]: value } : row)));
   };
 
@@ -178,7 +214,13 @@ export default function EnvironmentDrawer({
     setIsSaving(true);
     setSaveError(null);
     try {
-      await api.patch<ApiResponse<unknown>>(`/projects/${projectId}/environment`, { variables: patch });
+      // `set` merges and `remove` drops — the two keys the route reads. A body
+      // it does not recognise parses to neither, and the route answers 400
+      // "Provide at least one key to set or remove".
+      await api.patch<ApiResponse<unknown>>(`/projects/${projectId}/environment`, {
+        set: patch.set,
+        remove: patch.remove,
+      });
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 3000);
       onSaved();
@@ -244,9 +286,9 @@ export default function EnvironmentDrawer({
                 {missing.length === 0 ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, color: "#15803d", fontSize: 13 }}>
                     <Check size={15} />
-                    {environment.placeholders.length === 0
+                    {referenced.length === 0
                       ? "No endpoint in this project uses a placeholder."
-                      : `Every placeholder in this project has a value (${environment.placeholders.length}).`}
+                      : `Every placeholder in this project has a value (${referenced.length}).`}
                   </div>
                 ) : (
                   <>
@@ -255,7 +297,7 @@ export default function EnvironmentDrawer({
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {missing.map((placeholder) => {
-                        const isOpen = expanded.includes(placeholder.name);
+                        const isExpanded = expanded.includes(placeholder.name);
                         return (
                           <div key={placeholder.name} style={{ border: "1px solid #fde68a", backgroundColor: "#fffbeb", borderRadius: 8, overflow: "hidden" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px" }}>
@@ -265,13 +307,13 @@ export default function EnvironmentDrawer({
                                 style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: placeholder.usedBy.length === 0 ? "default" : "pointer", minWidth: 0 }}
                               >
                                 {placeholder.usedBy.length > 0
-                                  ? (isOpen ? <ChevronDown size={14} color="#92400e" /> : <ChevronRight size={14} color="#92400e" />)
+                                  ? (isExpanded ? <ChevronDown size={14} color="#92400e" /> : <ChevronRight size={14} color="#92400e" />)
                                   : <span style={{ width: 14 }} />}
                                 <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "#92400e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {`{{${placeholder.name}}}`}
                                 </span>
                                 <span style={{ fontSize: 12, color: "#b45309", whiteSpace: "nowrap" }}>
-                                  {usageSummary(placeholder.usedBy.length)} · not set
+                                  {usageSummary(placeholder.usedBy.length)}
                                 </span>
                               </button>
 
@@ -285,26 +327,25 @@ export default function EnvironmentDrawer({
                               </button>
                             </div>
 
-                            {isOpen && placeholder.usedBy.length > 0 && (
+                            {isExpanded && placeholder.usedBy.length > 0 && (
                               <div style={{ borderTop: "1px solid #fde68a", backgroundColor: "#ffffff", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
-                                {placeholder.usedBy.map((usage, index) => {
-                                  const colors = methodColors(usage.method);
+                                {placeholder.usedBy.map((endpoint) => {
+                                  const colors = methodColors(endpoint.method);
                                   return (
                                     <button
-                                      key={`${usage.id}-${usage.where}-${index}`}
-                                      onClick={() => { onSelectEndpoint(usage.id); onClose(); }}
+                                      key={endpoint.id}
+                                      onClick={() => { onSelectEndpoint(endpoint.id); onClose(); }}
                                       title="Open this endpoint"
                                       style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 8px", background: "transparent", border: "none", borderRadius: 6, cursor: "pointer", textAlign: "left", transition: "background 0.15s" }}
                                       onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#f9fafb"}
                                       onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
                                     >
                                       <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, width: 44, textAlign: "center", flexShrink: 0 }}>
-                                        {usage.method}
+                                        {endpoint.method}
                                       </span>
                                       <span style={{ fontSize: 12, fontFamily: "monospace", color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                        {usage.path}
+                                        {endpoint.path}
                                       </span>
-                                      <span style={{ fontSize: 11, color: "#9ca3af", flexShrink: 0 }}>{siteLabel(usage)}</span>
                                     </button>
                                   );
                                 })}
@@ -331,9 +372,12 @@ export default function EnvironmentDrawer({
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {rows.map((row) => {
-                    const key = row.key.trim();
-                    const isNew = key !== "" && !Object.prototype.hasOwnProperty.call(saved, key);
-                    const oversized = byteLength(row.value) > MAX_VALUE_BYTES;
+                    const isNew = row.key !== "" && !saved.some((variable) => variable.key === row.key);
+                    const oversized =
+                      serialisedLength(parseValue(row.text, row.originalValue)) > MAX_VALUE_CHARS;
+                    // A value that is not a string round-trips as JSON text;
+                    // saying so explains why it is showing braces or bare digits.
+                    const isJson = typeof row.originalValue !== "string";
 
                     return (
                       <div key={row.rowId} style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -348,13 +392,14 @@ export default function EnvironmentDrawer({
                         <input
                           id={`env-value-${row.rowId}`}
                           type="text"
-                          value={row.value}
-                          onChange={(e) => updateRow(row.rowId, "value", e.target.value)}
+                          value={row.text}
+                          onChange={(e) => updateRow(row.rowId, "text", e.target.value)}
                           // Values are deliberately never masked: seeing that a
                           // script stored the string "undefined" is the point.
                           placeholder="(empty string)"
+                          title={isJson ? "Stored as JSON, not as text" : undefined}
                           spellCheck={false}
-                          style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 6, border: `1px solid ${oversized ? "#ef4444" : "#d1d5db"}`, fontSize: 13, fontFamily: "monospace", outline: "none", boxSizing: "border-box", backgroundColor: oversized ? "#fef2f2" : "#ffffff" }}
+                          style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 6, border: `1px solid ${oversized ? "#ef4444" : "#d1d5db"}`, fontSize: 13, fontFamily: "monospace", outline: "none", boxSizing: "border-box", backgroundColor: oversized ? "#fef2f2" : isJson ? "#f5f3ff" : "#ffffff" }}
                         />
                         <button
                           onClick={() => removeRow(row.rowId)}
@@ -406,7 +451,7 @@ export default function EnvironmentDrawer({
                 {saveStatus === "saved" && !isDirty
                   ? "Saved."
                   : isDirty
-                    ? `${Object.keys(patch).length} change${Object.keys(patch).length === 1 ? "" : "s"} to save`
+                    ? `${patchSize(patch)} change${patchSize(patch) === 1 ? "" : "s"} to save`
                     : "No changes"}
               </span>
               <button
