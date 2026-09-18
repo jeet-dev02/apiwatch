@@ -41,25 +41,11 @@ export default function CreateProjectModal({ isOpen, onClose, onCreate }: Create
     setIsSubmitting(true);
     
     try {
-      let autoExtractedBaseUrl = "";
-      
-      //  Automatically extract the root domain from the Swagger URL
-      if (url.trim()) {
-        try {
-          const parsedUrl = new URL(url.trim());
-          autoExtractedBaseUrl = parsedUrl.origin; 
-        } catch (e) {
-          console.warn("Could not parse URL origin, proceeding with default backend logic.");
-        }
-      }
-
-      // Pass the extracted URL silently to the backend!
-      await onCreate({ 
-        name, 
-        url, 
-        baseUrlOverride: autoExtractedBaseUrl 
-      });
-
+      // No baseUrlOverride. The backend reads where the endpoints live from the
+      // document itself, and falls back to the URL it was fetched from. This
+      // used to send that URL's origin, which beat the document's own basePath
+      // and servers and dropped /v2 from every petstore endpoint.
+      await onCreate({ name, url });
     } catch (error) {
       console.error("Failed to create project:", error);
     } finally {

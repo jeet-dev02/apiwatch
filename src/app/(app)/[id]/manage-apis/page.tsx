@@ -276,15 +276,9 @@ export default function ApiManagerPage() {
     setIsImporting(true);
     
     try {
-      let autoExtractedBaseUrl = "";
-      try {
-        const parsedUrl = new URL(importUrl.trim());
-        autoExtractedBaseUrl = parsedUrl.origin;
-      } catch (e) {
-        console.warn("Could not parse URL origin, proceeding with default backend logic.");
-      }
-
-      await importSwagger(currentProject.id, importUrl.trim(), autoExtractedBaseUrl);
+      // No baseUrlOverride: the document says where its endpoints live (see
+      // CreateProjectModal). Sending the URL's origin here overrode it.
+      await importSwagger(currentProject.id, importUrl.trim());
 
       // An import is what fills a project with {{placeholders}} to begin with.
       loadEnvironment();
@@ -321,8 +315,17 @@ export default function ApiManagerPage() {
     }
   };
 
+  // path is the endpoint's name, in the list and on its alerts. It follows the
+  // URL only while a new endpoint is being written; once one is saved, editing
+  // its URL leaves the name alone. It used to be rewritten on every keystroke,
+  // so correcting an imported endpoint's URL silently renamed it:
+  // "/pet/findByStatus" became "/v2/pet/findByStatus", base path and all.
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const url = e.target.value.replace(/\s/g, "");
+    if (!isCreating) {
+      setFormData({ ...formData, url });
+      return;
+    }
     try {
       const urlObj = new URL(url);
       setFormData({ ...formData, url, path: urlObj.pathname });
