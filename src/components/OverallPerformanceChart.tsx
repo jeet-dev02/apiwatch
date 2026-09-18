@@ -10,6 +10,7 @@ import {
     ResponsiveContainer,
 } from "recharts";
 import { Activity, AlertTriangle, Clock, Zap } from "lucide-react";
+import { Stability } from "@/lib/stability";
 
 interface TestResult {
     id: string;
@@ -17,7 +18,8 @@ interface TestResult {
     // Nullable in the schema — a request that never completed has no timing.
     responseTimeMs: number | null;
     result: "PASS" | "WARN" | "FAIL";
-    consistencyStable: boolean;
+    // Read from the API's nullable consistencyStable by the test-runs page.
+    stability: Stability;
     endpoint?: { method: string; path: string };
 }
 
@@ -66,8 +68,9 @@ export default function OverallPerformanceChart({ historicalRuns = [], latestRun
           )
         : null;
 
-    // Count how many APIs choked under the 10-ping pressure
-    const unstableCount = latestRun.results?.filter(r => !r.consistencyStable && r.result !== "FAIL").length || 0;
+    // Count how many APIs choked under the 10-ping pressure. Not-compared
+    // results timed one ping at most, so they had no variance to show.
+    const unstableCount = latestRun.results?.filter(r => r.stability === "unstable" && r.result !== "FAIL").length || 0;
 
     return (
         <div style={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>

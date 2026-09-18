@@ -8,6 +8,7 @@ import { useProjects } from "@/context/ProjectContext";
 import OverallPerformanceChart from "@/components/OverallPerformanceChart"; 
 import PageSkeleton from "@/components/ui/PageSkeleton"; 
 import { api, ApiResponse, asArray } from "@/lib/api";
+import { readStability, Stability } from "@/lib/stability";
 
 interface TestResult {
   id: string;
@@ -17,7 +18,8 @@ interface TestResult {
   responseTimeMs: number | null;
   result: "PASS" | "WARN" | "FAIL";
   errorMessage: string | null;
-  consistencyStable: boolean;
+  // The API's nullable consistencyStable, read by fromApi. See lib/stability.
+  stability: Stability;
   // A Prisma Json column, so this arrives as a real array of ping timings.
   // Older rows may still hold a JSON string; readPings takes either.
   consistencyResults: number[] | string | null;
@@ -66,6 +68,18 @@ interface TestRun {
   results: TestResult[];
 }
 
+/** A result as the API sends it: consistencyStable is null when nothing was compared. */
+type TestResultFromApi = Omit<TestResult, "stability"> & { consistencyStable: boolean | null };
+type TestRunFromApi = Omit<TestRun, "results"> & { results: TestResultFromApi[] };
+
+const fromApi = (run: TestRunFromApi): TestRun => ({
+  ...run,
+  results: asArray<TestResultFromApi>(run.results).map(({ consistencyStable, ...result }) => ({
+    ...result,
+    stability: readStability(consistencyStable),
+  })),
+});
+
 /** A run in one of these states will never change again, so polling can stop. */
 const isTerminal = (run?: TestRun) =>
   !!run && (run.status === "COMPLETED" || run.status === "FAILED");
@@ -95,6 +109,18 @@ const getBadgeStyle = (result: string) => {
     case "WARN": return { bg: "#fffbeb", text: "#d97706", border: "#fde68a" };
     default: return { bg: "#f3f4f6", text: "#4b5563", border: "#d1d5db" };
   }
+};
+
+/** The Stability column for a result that did not fail. Not compared is neither a warning nor a tick. */
+const STABILITY_CELL: Record<Stability, { label: string; color: string; fontWeight: number; title?: string }> = {
+  stable: { label: "✓ Stable", color: "#4b5563", fontWeight: 500 },
+  unstable: { label: "⚠ Unstable", color: "#dc2626", fontWeight: 600 },
+  "not-compared": {
+    label: "— Not compared",
+    color: "#6b7280",
+    fontWeight: 500,
+    title: "Fewer than two pings were timed, so there was nothing to compare.",
+  },
 };
 
 const DiagnosticTerminal = () => {
@@ -220,10 +246,10 @@ function TestRunsContent() {
       if (cancelled) return;
 
       try {
-        const json = await api.get<ApiResponse<TestRun[]>>(`/projects/${projectId}/test-runs`);
+        const json = await api.get<ApiResponse<TestRunFromApi[]>>(`/projects/${projectId}/test-runs`);
         if (cancelled) return;
 
-        const runs = asArray<TestRun>(json.data);
+        const runs = asArray<TestRunFromApi>(json.data).map(fromApi);
         setTestRuns(runs);
         setIsInitialLoad(false);
 
@@ -310,12 +336,16 @@ function TestRunsContent() {
     else if (r.statusCode >= 500) count5xx++;
   });
 
-  // Slowest result, or the first unstable one. reduce over an empty list would
-  // throw without the length check — results[0] as a seed is undefined there.
+  // Slowest result, or the first unstable one — of those whose pings were
+  // compared. A not-compared result timed one ping at most, so the ping box has
+  // no repeated requests to show for it; with none compared there is no box.
+  // reduce over an empty list would throw without the length check — the
+  // first element as a seed is undefined there.
+  const compared = results.filter((r) => r.stability !== "not-compared");
   const unstableTarget =
-    results.find((r) => !r.consistencyStable) ||
-    (results.length > 0
-      ? results.reduce((prev, curr) =>
+    compared.find((r) => r.stability === "unstable") ||
+    (compared.length > 0
+      ? compared.reduce((prev, curr) =>
           (prev.responseTimeMs ?? 0) > (curr.responseTimeMs ?? 0) ? prev : curr
         )
       : undefined);
@@ -504,6 +534,10 @@ function TestRunsContent() {
                     const badgeStyle = getBadgeStyle(row.result);
                     const barColor = row.result === "PASS" ? "#10b981" : row.result === "FAIL" ? "#ef4444" : "#f59e0b";
                     const rowTimeWidth = slowestTime > 0 ? `${Math.max((rowTime / slowestTime) * 100, 2)}%` : "0%";
+                    const stabilityCell =
+                        row.result === "FAIL"
+                            ? { label: "✗ Failed", color: row.stability === "stable" ? "#4b5563" : "#dc2626", fontWeight: row.stability === "stable" ? 500 : 600, title: undefined }
+                            : STABILITY_CELL[row.stability];
 
                     return (
                         <tr key={row.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
@@ -531,8 +565,8 @@ function TestRunsContent() {
                             <span style={{ fontSize: 14, color: "#9ca3af" }}>—</span>
                             )}
                         </td>
-                        <td style={{ padding: "16px 24px", fontSize: 13, color: row.consistencyStable ? "#4b5563" : "#dc2626", fontWeight: row.consistencyStable ? 500 : 600 }}>
-                            {row.result === "FAIL" ? "✗ Failed" : row.consistencyStable ? "✓ Stable" : "⚠ Unstable"}
+                        <td title={stabilityCell.title} style={{ padding: "16px 24px", fontSize: 13, color: stabilityCell.color, fontWeight: stabilityCell.fontWeight }}>
+                            {stabilityCell.label}
                         </td>
                         <td style={{ padding: "16px 24px", fontSize: 13, color: "#4b5563" }}>
                             {row.authResult === "PUBLIC" ? "— Public" : row.authResult}
@@ -589,7 +623,7 @@ function TestRunsContent() {
                     <div style={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 24, display: "flex", flexDirection: "column", justifyContent: "center", boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.03)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                         <h4 style={{ fontSize: 14, fontWeight: 600, color: "#111827", margin: 0 }}>Repeated request handling (10-Ping Burst)</h4>
-                        {unstableTarget.consistencyStable && unstableTarget.result === "PASS" ? (
+                        {unstableTarget.stability === "stable" && unstableTarget.result === "PASS" ? (
                             <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#16a34a", fontSize: 12, fontWeight: 600, padding: "4px 10px", backgroundColor: "#f0fdf4", borderRadius: 6, border: "1px solid #bbf7d0" }}>
                                 <CheckCircle2 size={14} /> Stabilized
                             </div>
