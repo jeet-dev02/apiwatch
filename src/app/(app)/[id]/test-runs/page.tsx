@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { ArrowLeft, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Terminal, PlayCircle, CalendarClock } from "lucide-react";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useProjects } from "@/context/ProjectContext";
 import OverallPerformanceChart from "@/components/OverallPerformanceChart";
 import PageSkeleton from "@/components/ui/PageSkeleton";
@@ -320,6 +320,39 @@ function TestRunsContent() {
       if (timerId) clearTimeout(timerId);
     };
   }, [projectId, activeRunId, pollToken]);
+
+  // Once the latest run has finished the loop above stops, and a scheduled
+  // run that starts while the page sits open goes unseen until a click on Run
+  // gets a 409. So look again when the page comes back into view, and the
+  // banner and the disabled Run are there before anyone clicks.
+  //
+  // Only while the loop is stopped: restarting a running loop would reset its
+  // two-minute limit on every focus. A loop that gave up at that limit is
+  // stopped too, so this is also its "check again". Watching the latest run
+  // rather than activeRunId, which after a click is our finished run, and
+  // would stop the loop before it saw anything newer.
+  const lastRecheck = useRef(0);
+  useEffect(() => {
+    if (isRunning || !projectId) return;
+
+    const recheck = () => {
+      if (document.visibilityState !== "visible") return;
+      // Switching back to the tab fires both events; one look is enough.
+      if (Date.now() - lastRecheck.current < 2000) return;
+      lastRecheck.current = Date.now();
+
+      setPollError(null);
+      setActiveRunId(null);
+      setPollToken((token) => token + 1);
+    };
+
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [isRunning, projectId]);
 
   // At most one run of a project is in flight (the backend enforces it), and
   // runs come newest first.
