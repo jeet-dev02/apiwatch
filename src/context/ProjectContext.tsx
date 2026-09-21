@@ -72,6 +72,7 @@ interface ProjectContextType {
   refreshProjects: () => Promise<void>;
   addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
   updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<Endpoint | null>;
+  setIncludeInSchedule: (projectId: string, endpointId: string, include: boolean) => Promise<Endpoint | null>;
   importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
   testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
   runAllTests: (projectId: string) => Promise<string | null>;
@@ -214,6 +215,33 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Switch an endpoint in or out of scheduled runs. Its own PATCH, which takes
+   * nothing else, so a form open on the same endpoint neither has to be saved
+   * for this to stick nor can undo it later (see editableFields).
+   */
+  const setIncludeInSchedule = async (projectId: string, endpointId: string, include: boolean) => {
+    try {
+      const json = await api.patch<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints/${endpointId}`, { includeInSchedule: include });
+
+      setProjects((prev) => prev.map(p =>
+        p.id === projectId
+          ? {
+              ...p,
+              endpoints: asArray<Endpoint>(p.endpoints).map(ep =>
+                ep.id === endpointId ? { ...ep, includeInSchedule: json.data?.includeInSchedule ?? include } : ep
+              ),
+            }
+          : p
+      ));
+      return json.data ?? null;
+    } catch (error) {
+      console.error("Error changing whether an endpoint is scheduled:", error);
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
+      return null;
+    }
+  };
+
   const testEndpoint = async (projectId: string, endpointId: string) => {
     try {
       return await api.post<ApiResponse<unknown>>(`/projects/${projectId}/endpoints/${endpointId}/test`);
@@ -263,8 +291,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       removeProject, 
       updateProjectEndpoints, 
       refreshProjects: fetchProjects,
-      addEndpoint,       
+      addEndpoint,
       updateEndpoint,
+      setIncludeInSchedule,
       importSwagger,
       testEndpoint,
       runAllTests 

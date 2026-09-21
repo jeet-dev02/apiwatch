@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Play, Save, Trash2, Settings2, ArrowLeft, Check, AlertCircle, AlertTriangle, UploadCloud, PenLine, Loader2, Braces } from "lucide-react";
+import { Plus, Play, Save, Trash2, Settings2, ArrowLeft, Check, AlertCircle, AlertTriangle, UploadCloud, PenLine, Loader2, Braces, CalendarClock } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useProjects, Endpoint, HttpMethod } from "@/context/ProjectContext";
 import PageSkeleton from "@/components/ui/PageSkeleton";
 import EnvironmentDrawer from "@/components/EnvironmentDrawer";
+import ScheduleDrawer from "@/components/ScheduleDrawer";
+import { Schedule, defaultIncludeInSchedule, normaliseSchedule, shortIntervalLabel } from "@/lib/schedule";
 import Editor from "@monaco-editor/react";
 import { api, ApiResponse, UnauthorizedError, asArray } from "@/lib/api";
 import {
@@ -38,13 +40,14 @@ export default function ApiManagerPage() {
   const params = useParams();
   const projectSlugFromUrl = params.id as string;
   
-  const { 
-    projects, 
-    updateProjectEndpoints, 
-    addEndpoint, 
-    updateEndpoint, 
-    importSwagger, 
-    testEndpoint 
+  const {
+    projects,
+    updateProjectEndpoints,
+    addEndpoint,
+    updateEndpoint,
+    setIncludeInSchedule,
+    importSwagger,
+    testEndpoint
   } = useProjects();
 
   const currentProject = projects.find(p => p.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '') === projectSlugFromUrl);
@@ -76,6 +79,13 @@ export default function ApiManagerPage() {
   const [endpointsLoaded, setEndpointsLoaded] = useState(false);
   const [endpointsError, setEndpointsError] = useState<string | null>(null);
   const [endpointsAttempt, setEndpointsAttempt] = useState(0);
+
+  const [schedule, setSchedule] = useState<Schedule | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [showScheduleDrawer, setShowScheduleDrawer] = useState(false);
+  // Endpoints whose switch has a PATCH in flight.
+  const [schedulePending, setSchedulePending] = useState<string[]>([]);
 
   useEffect(() => {
     if (currentProject) {
@@ -153,6 +163,33 @@ export default function ApiManagerPage() {
   useEffect(() => {
     loadEnvironment();
   }, [loadEnvironment]);
+
+  /**
+   * Coverage and warnings are worked out from the endpoints on every read, so
+   * like the environment this is re-read after anything that changes them:
+   * a switch, a save (a new URL or method can make or break a chain), a
+   * create, a delete, an import.
+   */
+  const loadSchedule = useCallback(async () => {
+    if (!projectId) return;
+
+    setScheduleLoading(true);
+    try {
+      const json = await api.get<ApiResponse<unknown>>(`/projects/${projectId}/schedule`);
+      setSchedule(normaliseSchedule(json.data));
+      setScheduleError(null);
+    } catch (error) {
+      // Left null rather than reading as "off, nothing to warn about".
+      if (!(error instanceof UnauthorizedError)) setScheduleError((error as Error).message);
+      setSchedule(null);
+    } finally {
+      setScheduleLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    loadSchedule();
+  }, [loadSchedule]);
 
   if (!currentProject) {
     return <PageSkeleton />;
@@ -238,6 +275,33 @@ export default function ApiManagerPage() {
     (name) => !isSet(environment, name)
   );
 
+  // Warnings name the endpoint they are about, so each one is also shown on
+  // its row in the list, not only in the drawer.
+  const scheduleWarnings = new Map<string, string[]>();
+  for (const warning of schedule?.warnings ?? []) {
+    if (!warning.endpointId) continue;
+    scheduleWarnings.set(warning.endpointId, [...(scheduleWarnings.get(warning.endpointId) ?? []), warning.message]);
+  }
+
+  // PUT gives an endpoint whose method changes that method's default, over
+  // whatever it had. Say so before the save rather than after it.
+  const savedCopy = isCreating ? undefined : endpoints.find((ep) => ep.id === activeId);
+  const methodResetsSchedule =
+    !!savedCopy &&
+    savedCopy.includeInSchedule !== undefined &&
+    formData.method !== savedCopy.method &&
+    defaultIncludeInSchedule(formData.method) !== savedCopy.includeInSchedule;
+
+  const handleToggleSchedule = async (endpoint: Endpoint) => {
+    const id = endpoint.id;
+    if (endpoint.includeInSchedule === undefined || schedulePending.includes(id)) return;
+
+    setSchedulePending((prev) => [...prev, id]);
+    const updated = await setIncludeInSchedule(currentProject.id, id, !endpoint.includeInSchedule);
+    setSchedulePending((prev) => prev.filter((pending) => pending !== id));
+    if (updated) loadSchedule();
+  };
+
   const handleSelect = (endpoint: Endpoint) => {
     setIsManualMode(false);
     setActiveId(endpoint.id);
@@ -264,6 +328,7 @@ export default function ApiManagerPage() {
       const newEndpoints = endpoints.filter(ep => ep.id !== activeId);
       setEndpoints(newEndpoints);
       loadEnvironment();
+      loadSchedule();
       if (newEndpoints.length > 0) {
         handleSelect(newEndpoints[0]);
       } else {
@@ -295,6 +360,7 @@ export default function ApiManagerPage() {
       const updatedEndpoints = endpoints.map((ep) => ep.id === saved.id ? saved : ep);
       setEndpoints(updatedEndpoints);
       loadEnvironment();
+      loadSchedule();
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
     }
@@ -312,6 +378,7 @@ export default function ApiManagerPage() {
     }
 
     loadEnvironment();
+    loadSchedule();
 
     try {
       const result = await testEndpoint(currentProject.id, formData.id as string);
@@ -333,6 +400,7 @@ export default function ApiManagerPage() {
     const newEndpointList = [...endpoints, formData];
     setEndpoints(newEndpointList);
     loadEnvironment();
+    loadSchedule();
     setIsManualMode(false);
     setSaveStatus("saved");
     setTimeout(() => setSaveStatus("idle"), 2000);
@@ -350,6 +418,7 @@ export default function ApiManagerPage() {
 
       // An import is what fills a project with {{placeholders}} to begin with.
       loadEnvironment();
+      loadSchedule();
       
       setIsImporting(false);
       setShowImportBox(false);
@@ -442,13 +511,46 @@ export default function ApiManagerPage() {
             </span>
           ) : null}
         </button>
+
+        {/* Project-scoped like Environment, and here rather than on Test Runs
+            because what its warnings ask for is done in the list below:
+            switching an endpoint in or out of scheduled runs. */}
+        <button
+          onClick={() => setShowScheduleDrawer(true)}
+          title="Scheduled runs"
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", fontSize: 13, fontWeight: 600, color: "#374151", backgroundColor: "#ffffff", border: "1px solid #d1d5db", borderRadius: 8, cursor: "pointer", transition: "all 0.2s" }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#f9fafb"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "#ffffff"; }}
+        >
+          <CalendarClock size={16} />
+          Schedule
+          {scheduleLoading && !schedule ? (
+            <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: "#9ca3af" }} />
+          ) : schedule ? (
+            <>
+              <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 10, padding: "1px 7px", color: schedule.enabled ? "#1d4ed8" : "#6b7280", backgroundColor: schedule.enabled ? "#dbeafe" : "#f3f4f6" }}>
+                {schedule.enabled && schedule.intervalMinutes ? shortIntervalLabel(schedule.intervalMinutes) : "Off"}
+              </span>
+              {schedule.warnings.length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#ffffff", backgroundColor: "#d97706", borderRadius: 10, padding: "1px 7px" }}>
+                  {schedule.warnings.length} warning{schedule.warnings.length === 1 ? "" : "s"}
+                </span>
+              )}
+            </>
+          ) : null}
+        </button>
       </div>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         
         <div style={{ width: 340, backgroundColor: "#ffffff", borderRight: "1px solid #e5e7eb", display: "flex", flexDirection: "column", zIndex: 10, transition: "opacity 0.2s", pointerEvents: (isTesting || isDeletingEndpoint) ? "none" : "auto", opacity: (isTesting || isDeletingEndpoint) ? 0.6 : 1 }}>
-          <div style={{ padding: "16px 20px", borderBottom: "1px solid #f3f4f6", fontSize: 12, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid #f3f4f6", fontSize: 12, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             Configured Endpoints
+            {endpoints.length > 0 && (
+              <span title="Whether scheduled runs call the endpoint. Running the suite by hand calls every one." style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", textTransform: "none", color: "#9ca3af", cursor: "help" }}>
+                On schedule
+              </span>
+            )}
           </div>
           
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 12px" }}>
@@ -461,10 +563,38 @@ export default function ApiManagerPage() {
                 {endpoints.map((ep) => {
                   const isActive = activeId === ep.id && !showZeroState;
                   const colors = getMethodColor(ep.method);
+                  const included = ep.includeInSchedule;
+                  const pending = schedulePending.includes(ep.id);
+                  const warnings = scheduleWarnings.get(ep.id);
                   return (
                     <div key={ep.id} onClick={() => handleSelect(ep)} style={{ display: "flex", alignItems: "center", padding: "10px 12px", borderRadius: 8, cursor: "pointer", transition: "all 0.15s ease", backgroundColor: isActive ? "#eff6ff" : "transparent", border: `1px solid ${isActive ? "#bfdbfe" : "transparent"}` }} onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "#f3f4f6"; }} onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}>
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, marginRight: 12, width: 48, textAlign: "center" }}>{ep.method}</span>
                       <span style={{ fontSize: 13, fontWeight: isActive ? 600 : 500, color: isActive ? "#111827" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ep.path}</span>
+
+                      {warnings && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowScheduleDrawer(true); }}
+                          title={warnings.join("\n\n")}
+                          aria-label="Scheduled-run warning"
+                          style={{ flexShrink: 0, display: "flex", alignItems: "center", marginLeft: 8, padding: 2, background: "transparent", border: "none", cursor: "pointer" }}
+                        >
+                          <AlertTriangle size={14} color="#d97706" />
+                        </button>
+                      )}
+
+                      {included !== undefined && (
+                        <button
+                          role="switch"
+                          aria-checked={included}
+                          aria-label={`Include ${ep.method} ${ep.path} in scheduled runs`}
+                          title={included ? "Scheduled runs call this endpoint. Click to leave it out." : "Scheduled runs leave this endpoint out. Click to include it."}
+                          disabled={pending}
+                          onClick={(e) => { e.stopPropagation(); handleToggleSchedule(ep); }}
+                          style={{ flexShrink: 0, position: "relative", width: 28, height: 16, marginLeft: 10, borderRadius: 8, border: "none", padding: 0, backgroundColor: included ? "#2563eb" : "#d1d5db", cursor: pending ? "wait" : "pointer", opacity: pending ? 0.5 : 1, transition: "background 0.2s" }}
+                        >
+                          <span style={{ position: "absolute", top: 2, left: included ? 14 : 2, width: 12, height: 12, borderRadius: "50%", backgroundColor: "#ffffff", boxShadow: "0 1px 2px rgba(0,0,0,0.2)", transition: "left 0.2s" }} />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -775,6 +905,15 @@ export default function ApiManagerPage() {
                   </button>
                 )}
 
+                {methodResetsSchedule && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12, color: "#4b5563", fontSize: 13 }}>
+                    <CalendarClock size={14} style={{ flexShrink: 0 }} />
+                    {defaultIncludeInSchedule(formData.method)
+                      ? `Saving as ${formData.method} puts this endpoint on scheduled runs`
+                      : `Saving as ${formData.method} takes this endpoint off scheduled runs`}
+                  </div>
+                )}
+
                 <div style={{ flex: 1 }}></div>
 
                 {isCreating ? (
@@ -813,6 +952,19 @@ export default function ApiManagerPage() {
         loadError={envError}
         onSaved={loadEnvironment}
         onSelectEndpoint={handleSelectById}
+      />
+
+      <ScheduleDrawer
+        isOpen={showScheduleDrawer}
+        onClose={() => setShowScheduleDrawer(false)}
+        projectId={currentProject.id}
+        projectName={currentProject.title}
+        schedule={schedule}
+        isLoading={scheduleLoading}
+        loadError={scheduleError}
+        onSaved={setSchedule}
+        onSelectEndpoint={handleSelectById}
+        endpoints={endpoints}
       />
 
       <style dangerouslySetInnerHTML={{ __html: `@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}} />
