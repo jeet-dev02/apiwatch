@@ -21,6 +21,38 @@ export interface Endpoint {
   postResponseScript?: string; 
   expectedStatus: string;
   maxResponseTime: string;
+  // Only on an endpoint read from GET /endpoints; /projects leaves them out.
+  // None of them is the form's to send back: see editableFields.
+  order?: number;
+  pingCount?: number;
+  includeInSchedule?: boolean;
+}
+
+/**
+ * What POST and PUT /endpoints get from the API Manager's form: the fields it
+ * edits, and nothing else.
+ *
+ * The form holds the whole endpoint as it was loaded, and this used to send
+ * all of it back. The backend takes a field it is sent as a value meant, so a
+ * stale copy undid whatever had changed since: an endpoint switched off
+ * scheduled runs in the list was switched back on by the next save of the
+ * form. Left out, includeInSchedule, pingCount and order stay as the server
+ * has them, and a new endpoint gets the defaults for its method.
+ */
+function editableFields(endpoint: Endpoint) {
+  return {
+    method: endpoint.method,
+    path: endpoint.path,
+    url: endpoint.url,
+    authType: endpoint.authType,
+    token: endpoint.token,
+    headers: endpoint.headers,
+    body: endpoint.body,
+    preRequestScript: endpoint.preRequestScript,
+    postResponseScript: endpoint.postResponseScript,
+    expectedStatus: endpoint.expectedStatus,
+    maxResponseTime: String(endpoint.maxResponseTime),
+  };
 }
 
 export type ProjectData = {
@@ -39,7 +71,7 @@ interface ProjectContextType {
   updateProjectEndpoints: (projectId: string, endpoints: Endpoint[]) => void;
   refreshProjects: () => Promise<void>;
   addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
-  updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<boolean>;
+  updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<Endpoint | null>;
   importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
   testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
   runAllTests: (projectId: string) => Promise<string | null>;
@@ -132,18 +164,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateProjectEndpoints = (projectId: string, newEndpoints: Endpoint[]) => {
+  // Stable, so the API Manager can load through it from an effect.
+  const updateProjectEndpoints = useCallback((projectId: string, newEndpoints: Endpoint[]) => {
     setProjects((prev) => prev.map((p) => p.id === projectId ? { ...p, endpoints: newEndpoints } : p));
-  };
+  }, []);
 
   const addEndpoint = async (projectId: string, endpointData: Endpoint) => {
     try {
-      const payload = {
-        ...endpointData,
-        maxResponseTime: String(endpointData.maxResponseTime) 
-      };
-
-      const json = await api.post<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints`, payload);
+      const json = await api.post<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints`, editableFields(endpointData));
 
       // Appending an undefined would leave a hole the list rendering trips on.
       if (!json.data?.id) {
@@ -161,14 +189,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Resolves to the endpoint as the server saved it, which is not always what
+   * was sent: changing the method also resets includeInSchedule to the new
+   * method's default. Null if the save failed.
+   */
   const updateEndpoint = async (projectId: string, endpointData: Endpoint) => {
     try {
-      const payload = {
-        ...endpointData,
-        maxResponseTime: String(endpointData.maxResponseTime)
-      };
-
-      const json = await api.put<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints/${endpointData.id}`, payload);
+      const json = await api.put<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints/${endpointData.id}`, editableFields(endpointData));
 
       // Fall back to what we just sent rather than blanking the row.
       const saved = json.data?.id ? json.data : endpointData;
@@ -178,11 +206,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           ? { ...p, endpoints: asArray<Endpoint>(p.endpoints).map(ep => ep.id === endpointData.id ? saved : ep) }
           : p
       ));
-      return true;
+      return saved;
     } catch (error) {
       console.error("Error updating endpoint:", error);
       if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
-      return false;
+      return null;
     }
   };
 

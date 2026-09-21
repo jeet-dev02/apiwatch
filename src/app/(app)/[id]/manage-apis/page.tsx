@@ -73,6 +73,10 @@ export default function ApiManagerPage() {
   const [envError, setEnvError] = useState<string | null>(null);
   const [showEnvDrawer, setShowEnvDrawer] = useState(false);
 
+  const [endpointsLoaded, setEndpointsLoaded] = useState(false);
+  const [endpointsError, setEndpointsError] = useState<string | null>(null);
+  const [endpointsAttempt, setEndpointsAttempt] = useState(0);
+
   useEffect(() => {
     if (currentProject) {
       // endpoints drives .length and .map below, so it has to be a list even
@@ -82,6 +86,45 @@ export default function ApiManagerPage() {
   }, [currentProject?.endpoints]);
 
   const projectId = currentProject?.id;
+
+  /**
+   * The endpoints as GET /endpoints returns them, put into the project list so
+   * the effect above picks them up.
+   *
+   * The form edits these, not the copies the project list arrived with.
+   * /projects leaves out the scripts and includeInSchedule, and the form sends
+   * back the scripts it holds, so saving an endpoint loaded from there after a
+   * reload saved it with none: its scripts were deleted. An import's response
+   * is raw rows, with no token and a body that can be null, so it is re-read
+   * here too.
+   */
+  const loadEndpoints = useCallback(async (): Promise<Endpoint[] | null> => {
+    if (!projectId) return null;
+
+    try {
+      const json = await api.get<ApiResponse<Endpoint[]>>(`/projects/${projectId}/endpoints`);
+      const full = asArray<Endpoint>(json.data);
+      updateProjectEndpoints(projectId, full);
+      setEndpointsError(null);
+      return full;
+    } catch (error) {
+      if (!(error instanceof UnauthorizedError)) setEndpointsError((error as Error).message);
+      return null;
+    }
+  }, [projectId, updateProjectEndpoints]);
+
+  // The editor is not shown until this lands, so the first selection can be
+  // made here without overwriting anything typed into the form.
+  useEffect(() => {
+    let cancelled = false;
+    loadEndpoints().then((full) => {
+      if (cancelled || !full) return;
+      setActiveId(full.length > 0 ? full[0].id : "new");
+      setFormData(full.length > 0 ? full[0] : emptyEndpoint);
+      setEndpointsLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [loadEndpoints, endpointsAttempt]);
 
   /**
    * Placeholders are derived from the endpoints, so this has to be re-read
@@ -113,6 +156,30 @@ export default function ApiManagerPage() {
 
   if (!currentProject) {
     return <PageSkeleton />;
+  }
+
+  if (!endpointsLoaded) {
+    if (!endpointsError) return <PageSkeleton />;
+
+    // Not a fallback to the project list's copies: editing one of those is
+    // what deleted scripts.
+    return (
+      <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#f9fafb", padding: 24 }}>
+        <div role="alert" style={{ maxWidth: 440, display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 20px", backgroundColor: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12 }}>
+          <AlertTriangle size={18} color="#dc2626" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#991b1b" }}>Could not load this project&apos;s endpoints</div>
+            <div style={{ fontSize: 13, color: "#b91c1c", marginTop: 2 }}>{endpointsError}</div>
+            <button
+              onClick={() => { setEndpointsError(null); setEndpointsAttempt((n) => n + 1); }}
+              style={{ marginTop: 12, padding: "6px 12px", fontSize: 13, fontWeight: 600, color: "#991b1b", backgroundColor: "#ffffff", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer" }}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const validateForm = () => {
@@ -223,9 +290,9 @@ export default function ApiManagerPage() {
     if (!isValid || activeId === "new") return;
     setTestResult(null);
     
-    const success = await updateEndpoint(currentProject.id, formData);
-    if (success) {
-      const updatedEndpoints = endpoints.map((ep) => ep.id === formData.id ? formData : ep);
+    const saved = await updateEndpoint(currentProject.id, formData);
+    if (saved) {
+      const updatedEndpoints = endpoints.map((ep) => ep.id === saved.id ? saved : ep);
       setEndpoints(updatedEndpoints);
       loadEnvironment();
       setSaveStatus("saved");
@@ -238,8 +305,8 @@ export default function ApiManagerPage() {
     setIsTesting(true);
     setTestResult(null);
 
-    const saveSuccess = await updateEndpoint(currentProject.id, formData);
-    if (!saveSuccess) {
+    const saved = await updateEndpoint(currentProject.id, formData);
+    if (!saved) {
       setIsTesting(false);
       return; 
     }
@@ -279,6 +346,7 @@ export default function ApiManagerPage() {
       // No baseUrlOverride: the document says where its endpoints live (see
       // CreateProjectModal). Sending the URL's origin here overrode it.
       await importSwagger(currentProject.id, importUrl.trim());
+      await loadEndpoints();
 
       // An import is what fills a project with {{placeholders}} to begin with.
       loadEnvironment();
