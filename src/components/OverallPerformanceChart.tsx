@@ -26,10 +26,14 @@ interface TestResult {
 interface TestRun {
     id: string;
     startedAt: string;
+    triggeredBy?: "MANUAL" | "SCHEDULED";
     totalTests: number;
     passed: number;
     healthScore: number;
     avgResponseTime: number;
+    // What a scheduled run left out; its score is over totalTests only.
+    skippedNotScheduled?: number;
+    skippedByChain?: number;
     results?: TestResult[];
 }
 
@@ -43,11 +47,16 @@ export default function OverallPerformanceChart({ historicalRuns = [], latestRun
     const safeHistorical = Array.isArray(historicalRuns) ? historicalRuns : [];
     
     // 2. Format the historical data for Recharts
+    // Scheduled and manual runs share one line, and a scheduled one may have
+    // checked only part of the project, so the tooltip says which it was.
     const chartData = [...safeHistorical].reverse().map((run) => {
         const date = new Date(run.startedAt);
+        const skipped = (run.skippedNotScheduled ?? 0) + (run.skippedByChain ?? 0);
+        const kind = run.triggeredBy === "SCHEDULED" ? "Scheduled" : "Manual";
         return {
             time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             score: Math.round(run.healthScore || 0),
+            label: skipped > 0 ? `${kind}, ${run.totalTests} of ${run.totalTests + skipped} checked` : kind,
         };
     });
 
@@ -95,7 +104,7 @@ export default function OverallPerformanceChart({ historicalRuns = [], latestRun
                                     <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "#9ca3af" }} tickFormatter={(value) => `${value}%`} />
                                     <Tooltip 
                                         contentStyle={{ borderRadius: 8, border: "1px solid #e5e7eb", boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)" }}
-                                        formatter={(value) => [`${value}%`, "Health Score"]}
+                                        formatter={(value, _name, item) => [`${value}%`, `Health Score (${(item.payload as { label: string }).label})`]}
                                     />
                                     <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={3} dot={{ r: 4, fill: "#2563eb", strokeWidth: 0 }} activeDot={{ r: 6, fill: "#2563eb", stroke: "#ffffff", strokeWidth: 2 }} />
                                 </LineChart>

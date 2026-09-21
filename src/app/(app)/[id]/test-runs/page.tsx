@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Terminal, PlayCircle } from "lucide-react";
+import { ArrowLeft, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Terminal, PlayCircle, CalendarClock } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { useProjects } from "@/context/ProjectContext";
-import OverallPerformanceChart from "@/components/OverallPerformanceChart"; 
-import PageSkeleton from "@/components/ui/PageSkeleton"; 
+import OverallPerformanceChart from "@/components/OverallPerformanceChart";
+import PageSkeleton from "@/components/ui/PageSkeleton";
 import { api, ApiResponse, asArray } from "@/lib/api";
 import { readStability, Stability } from "@/lib/stability";
+import { formatDateTime, relativeTime } from "@/lib/schedule";
 
 interface TestResult {
   id: string;
@@ -56,8 +57,11 @@ function readPings(raw: unknown): number[] {
 interface TestRun {
   id: string;
   status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  /** Someone clicked Run, or the project's schedule started it. */
+  triggeredBy: "MANUAL" | "SCHEDULED";
   startedAt: string;
   completedAt: string | null;
+  /** What the run called. A scheduled run scores only these. */
   totalTests: number;
   passed: number;
   failed: number;
@@ -65,15 +69,30 @@ interface TestRun {
   healthScore: number;
   avgResponseTime: number;
   slowestTime: number;
+  // What a scheduled run left out, and has no result for: switched off in the
+  // API Manager, or left out because a chain would break. totalTests plus
+  // both is the project's endpoint count when it ran. 0 on a manual run.
+  skippedNotScheduled: number;
+  skippedByChain: number;
   results: TestResult[];
 }
 
 /** A result as the API sends it: consistencyStable is null when nothing was compared. */
 type TestResultFromApi = Omit<TestResult, "stability"> & { consistencyStable: boolean | null };
-type TestRunFromApi = Omit<TestRun, "results"> & { results: TestResultFromApi[] };
+type TestRunFromApi = Omit<TestRun, "results" | "triggeredBy" | "skippedNotScheduled" | "skippedByChain"> & {
+  results: TestResultFromApi[];
+  triggeredBy?: string;
+  skippedNotScheduled?: number;
+  skippedByChain?: number;
+};
 
 const fromApi = (run: TestRunFromApi): TestRun => ({
   ...run,
+  // Absent from a backend older than scheduling, where every run was manual
+  // and called everything.
+  triggeredBy: run.triggeredBy === "SCHEDULED" ? "SCHEDULED" : "MANUAL",
+  skippedNotScheduled: run.skippedNotScheduled ?? 0,
+  skippedByChain: run.skippedByChain ?? 0,
   results: asArray<TestResultFromApi>(run.results).map(({ consistencyStable, ...result }) => ({
     ...result,
     stability: readStability(consistencyStable),
@@ -302,7 +321,21 @@ function TestRunsContent() {
     };
   }, [projectId, activeRunId, pollToken]);
 
-  const displayAsRunning = isRunning || forceHollywoodDelay;
+  // At most one run of a project is in flight (the backend enforces it), and
+  // runs come newest first.
+  const inFlightRun = testRuns.find((run) => !isTerminal(run)) ?? null;
+
+  // The terminal overlay stands for "the run you just started": clicking Run,
+  // or arriving from the Health Check drawer with ?activeRun. A manual run
+  // already going when the page opens still gets it, as before. A scheduled
+  // one does not: nobody here started it, so it gets a banner instead, over
+  // the last finished run's results.
+  const displayAsRunning = forceHollywoodDelay || (isRunning && inFlightRun?.triggeredBy !== "SCHEDULED");
+
+  // Any run in flight, seen or just asked for. The backend refuses a second
+  // with 409, so Run stays off until it lands.
+  const runInFlight = displayAsRunning || isRunning || inFlightRun !== null;
+  const scheduledInFlight = !displayAsRunning && inFlightRun?.triggeredBy === "SCHEDULED" ? inFlightRun : null;
 
   if (!currentProject) {
     return <PageSkeleton />;
@@ -312,7 +345,9 @@ function TestRunsContent() {
     return <PageSkeleton />;
   }
 
-  const latestRun = testRuns.length > 0 ? testRuns[0] : null;
+  // The newest run that has finished. The one in flight has no results yet,
+  // and shown, its zeros read as a run that scored 0%.
+  const latestRun = testRuns.find(isTerminal) ?? null;
   const results = asArray<TestResult>(latestRun?.results);
 
   const totalTests = latestRun?.totalTests || 0;
@@ -327,6 +362,18 @@ function TestRunsContent() {
   // A run that failed before executing anything reports totalTests 0, which
   // made every share NaN and fed "NaN%" into the conic-gradient below.
   const share = (n: number) => (totalTests > 0 ? (n / totalTests) * 100 : 0);
+
+  // A scheduled run's scores are over what it checked. Said next to them, so
+  // 100% of 7 is not read as 100% of 19.
+  const skipped = (latestRun?.skippedNotScheduled ?? 0) + (latestRun?.skippedByChain ?? 0);
+  const endpointCount = totalTests + skipped;
+  const coverageText =
+    skipped > 0
+      ? `${totalTests} of ${endpointCount} endpoints checked (${[
+          latestRun!.skippedNotScheduled > 0 && `${latestRun!.skippedNotScheduled} not scheduled`,
+          latestRun!.skippedByChain > 0 && `${latestRun!.skippedByChain} left out by a chain`,
+        ].filter(Boolean).join(", ")})`
+      : `${totalTests} endpoints tested`;
 
   let count2xx = 0, count4xx = 0, count5xx = 0, count0 = 0;
   results.forEach(r => {
@@ -353,19 +400,27 @@ function TestRunsContent() {
   const targetPings = readPings(unstableTarget?.consistencyResults);
 
   const handleRunSuite = async () => {
-    if (displayAsRunning) return;
+    if (runInFlight) return;
 
     setPollError(null);
     setIsRunning(true);
     setForceHollywoodDelay(true);
 
-    const newRunId = await runAllTests(currentProject.id);
+    const outcome = await runAllTests(currentProject.id);
 
-    // A null id means the trigger was refused — no endpoints configured, or a
-    // run was already in flight. Watching the project's latest run is right in
-    // both cases: the poll settles immediately if nothing new started, and
-    // follows the in-flight one if something had.
-    setActiveRunId(newRunId);
+    if (outcome.status !== "started") {
+      // Nothing of ours started, so there is nothing to put the overlay over.
+      // A conflict is a run that began between the page's last look and this
+      // click, most likely a scheduled one; the poll below finds it and says
+      // which kind it is.
+      setForceHollywoodDelay(false);
+      setIsRunning(false);
+    }
+
+    // Watch our run, or the one that was in flight instead. With neither (no
+    // endpoints configured, say) the poll watches the latest run and settles
+    // at once.
+    setActiveRunId(outcome.status === "failed" ? null : outcome.testRunId);
     setPollToken((token) => token + 1);
   };
 
@@ -396,31 +451,43 @@ function TestRunsContent() {
                     <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}>{passed} Passed</span>
                     {failed > 0 && <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}>{failed} Failed</span>}
                     {warned > 0 && <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#fffbeb", color: "#d97706", border: "1px solid #fde68a" }}>{warned} Warning</span>}
+                    {latestRun.triggeredBy === "SCHEDULED" ? (
+                      <span title="Started by the project's schedule" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#eef2ff", color: "#4338ca", border: "1px solid #c7d2fe" }}>
+                        <CalendarClock size={12} /> Scheduled
+                      </span>
+                    ) : (
+                      <span title="Started by someone running the suite" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 12, backgroundColor: "#f3f4f6", color: "#4b5563", border: "1px solid #e5e7eb" }}>
+                        <PlayCircle size={12} /> Manual
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
               <p style={{ fontSize: 14, color: "#6b7280", margin: 0 }}>
                 Project: <strong>{currentProject.title}</strong>
-                {latestRun ? ` · ${totalTests} endpoints tested` : " · No runs yet"}
+                {latestRun
+                  ? ` · ${latestRun.triggeredBy === "SCHEDULED" ? "Scheduled" : "Manual"} run, ${formatDateTime(latestRun.startedAt)} · ${coverageText}`
+                  : " · No finished runs yet"}
               </p>
             </div>
           </div>
           
-          <button 
+          <button
             onClick={handleRunSuite}
-            disabled={displayAsRunning} 
-            style={{ 
-              display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", 
-              backgroundColor: displayAsRunning ? "#93c5fd" : "#2563eb", 
-              border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, color: "#ffffff", 
-              cursor: displayAsRunning ? "not-allowed" : "pointer", 
-              boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)", transition: "all 0.2s" 
+            disabled={runInFlight}
+            title={runInFlight ? "A run of this project is in progress" : undefined}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
+              backgroundColor: runInFlight ? "#93c5fd" : "#2563eb",
+              border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, color: "#ffffff",
+              cursor: runInFlight ? "not-allowed" : "pointer",
+              boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)", transition: "all 0.2s"
             }}
-            onMouseEnter={(e) => { if(!displayAsRunning) e.currentTarget.style.backgroundColor = "#1d4ed8"; }}
-            onMouseLeave={(e) => { if(!displayAsRunning) e.currentTarget.style.backgroundColor = "#2563eb"; }}
+            onMouseEnter={(e) => { if(!runInFlight) e.currentTarget.style.backgroundColor = "#1d4ed8"; }}
+            onMouseLeave={(e) => { if(!runInFlight) e.currentTarget.style.backgroundColor = "#2563eb"; }}
           >
-            <RefreshCw size={16} style={{ animation: displayAsRunning ? "spin 1s linear infinite" : "none" }} /> 
-            {displayAsRunning ? "Running Suite..." : latestRun ? "Re-run suite" : "Run test suite"}
+            <RefreshCw size={16} style={{ animation: runInFlight ? "spin 1s linear infinite" : "none" }} />
+            {displayAsRunning ? "Running Suite..." : runInFlight ? "Run in progress" : latestRun ? "Re-run suite" : "Run test suite"}
           </button>
         </div>
 
@@ -435,8 +502,25 @@ function TestRunsContent() {
           </div>
         )}
 
+        {/* ── A scheduled run nobody here started ── */}
+        {scheduledInFlight && !pollError && (
+          <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 12, backgroundColor: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 12, padding: "16px 20px" }}>
+            <Loader2 size={18} color="#4338ca" style={{ flexShrink: 0, marginTop: 1, animation: "spin 1s linear infinite" }} />
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#3730a3" }}>A scheduled run is in progress</div>
+              <div style={{ fontSize: 13, color: "#4338ca", marginTop: 2 }}>
+                Started {formatDateTime(scheduledInFlight.startedAt)} ({relativeTime(scheduledInFlight.startedAt)}).{" "}
+                {latestRun
+                  ? "Its results replace the ones below when it finishes."
+                  : "Its results will appear here when it finishes."}{" "}
+                The suite can be run again once it has.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Nothing has ever run here ── */}
-        {!latestRun && !displayAsRunning && (
+        {!latestRun && !runInFlight && (
           <div style={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "48px 24px", textAlign: "center", boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.03)" }}>
             <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
               <PlayCircle size={24} color="#2563eb" />
@@ -462,9 +546,11 @@ function TestRunsContent() {
           <div style={{ display: "flex", flexDirection: "column", gap: 24, opacity: displayAsRunning ? 0.3 : 1, pointerEvents: displayAsRunning ? "none" : "auto", filter: displayAsRunning ? "grayscale(40%)" : "none", transition: "all 0.4s ease" }}>
             
             {/* ── Dashboard Chart & Metrics ── */}
-            <OverallPerformanceChart 
-                historicalRuns={testRuns} 
-                latestRun={latestRun} 
+            {/* Finished runs only: one in flight has no score yet, and plotted
+                as 0 it looked like an outage. */}
+            <OverallPerformanceChart
+                historicalRuns={testRuns.filter(isTerminal)}
+                latestRun={latestRun}
             />
 
             {/* ── 2. KPI Cards ── */}
@@ -474,11 +560,12 @@ function TestRunsContent() {
                 { label: "AVG RESPONSE", value: `${avgResp}ms`, color: "#111827" },
                 { label: "SUCCESS RATE", value: `${successRate}%`, color: successRate >= 90 ? "#16a34a" : "#dc2626" },
                 { label: "SLOWEST API", value: `${slowestTime}ms`, color: slowestTime > 1000 ? "#dc2626" : "#111827" },
-                { label: "TOTAL TESTS", value: totalTests.toString(), color: "#111827" },
+                { label: "TOTAL TESTS", value: totalTests.toString(), color: "#111827", note: skipped > 0 ? `of ${endpointCount} endpoints · ${skipped} skipped` : undefined },
                 ].map((stat, i) => (
                 <div key={i} style={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 20, boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.03)" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.05em", marginBottom: 8 }}>{stat.label}</div>
                     <div style={{ fontSize: 28, fontWeight: 700, color: stat.color, transition: "color 0.3s" }}>{stat.value}</div>
+                    {stat.note && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{stat.note}</div>}
                 </div>
                 ))}
             </div>

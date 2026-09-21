@@ -64,10 +64,12 @@ export default function HealthCheckDrawer({ isOpen, onClose, projectName, endpoi
     if (!currentProject) return;
 
     setIsRunning(true);
-    const testRunId = await runAllTests(currentProject.id);
+    const outcome = await runAllTests(currentProject.id);
     setIsRunning(false);
 
-    if (testRunId) {
+    if (outcome.status === "conflict") alert(outcome.message);
+
+    if (outcome.status === "started") {
       onClose();
       // ✨ THE FIX: Append ?activeRun=true to the URL
       router.push(`/${projectSlug}/test-runs?activeRun=true`); 

@@ -75,8 +75,20 @@ interface ProjectContextType {
   setIncludeInSchedule: (projectId: string, endpointId: string, include: boolean) => Promise<Endpoint | null>;
   importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
   testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
-  runAllTests: (projectId: string) => Promise<string | null>;
+  runAllTests: (projectId: string) => Promise<RunStart>;
 }
+
+/**
+ * What asking for a run came to.
+ *
+ * `conflict` is the backend's 409: a run of the project was already in
+ * flight, possibly a scheduled one nobody here started, and `testRunId` is
+ * that run, so the caller can follow it rather than report a failure.
+ */
+export type RunStart =
+  | { status: "started"; testRunId: string }
+  | { status: "conflict"; testRunId: string | null; message: string }
+  | { status: "failed" };
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
@@ -269,16 +281,26 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const runAllTests = async (projectId: string) => {
+  const runAllTests = async (projectId: string): Promise<RunStart> => {
     try {
       // testRunId sits at the top level of the payload, not inside `data`.
       const json = await api.post<ApiResponse<unknown> & { testRunId?: string }>(`/projects/${projectId}/run-all`);
 
-      return json.testRunId ?? null;
+      return json.testRunId ? { status: "started", testRunId: json.testRunId } : { status: "failed" };
     } catch (error) {
+      // Not alerted here: with runs starting on a schedule, finding one in
+      // flight is ordinary, and what to do about it is the caller's call.
+      if (error instanceof ApiError && error.status === 409) {
+        const body = error.body as { testRunId?: unknown } | undefined;
+        return {
+          status: "conflict",
+          testRunId: typeof body?.testRunId === "string" ? body.testRunId : null,
+          message: error.message,
+        };
+      }
       console.error("Error triggering test suite:", error);
       if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
-      return null;
+      return { status: "failed" };
     }
   };
 

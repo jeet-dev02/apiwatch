@@ -133,12 +133,12 @@ export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-/** "in 42 min", "3 h ago", "in 2 days". Under a minute either way is "now". */
+/** "in 42 min", "3 h ago", "in 2 days"; under a minute, "just now" or "in under a minute". */
 export function relativeTime(iso: string, now: number = Date.now()): string {
   const diff = new Date(iso).getTime() - now;
   const minutes = Math.round(Math.abs(diff) / 60_000);
 
-  if (minutes < 1) return "now";
+  if (minutes < 1) return diff > 0 ? "in under a minute" : "just now";
 
   let span: string;
   if (minutes < 60) span = `${minutes} min`;

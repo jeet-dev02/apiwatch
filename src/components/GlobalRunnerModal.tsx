@@ -80,10 +80,10 @@ export default function GlobalRunnerModal({ isOpen, onClose, preSelectedProjectI
     setCurrentLog("Initializing deep diagnostic engine...");
 
     // A. Fire the real backend API call immediately
-    const testRunId = await runAllTests(projectIdToScan);
+    const outcome = await runAllTests(projectIdToScan);
 
-    if (!testRunId) {
-        alert("Failed to start the test suite. Check your backend connection.");
+    if (outcome.status !== "started") {
+        alert(outcome.status === "conflict" ? outcome.message : "Failed to start the test suite. Check your backend connection.");
         onClose();
         return;
     }
