@@ -26,7 +26,15 @@ export interface Endpoint {
   order?: number;
   pingCount?: number;
   includeInSchedule?: boolean;
+  // False for a POST that leaves nothing behind, a login or a search, which
+  // silences the schedule's "creates a record on every run" warning. Only a
+  // POST's is read. Changed through patchEndpoint; PUT resets it to true when
+  // the method changes.
+  createsRecords?: boolean;
 }
+
+/** What PATCH /endpoints/:id takes: either setting, or both. */
+export type EndpointPatch = { includeInSchedule?: boolean; createsRecords?: boolean };
 
 /**
  * What POST and PUT /endpoints get from the API Manager's form: the fields it
@@ -36,8 +44,8 @@ export interface Endpoint {
  * all of it back. The backend takes a field it is sent as a value meant, so a
  * stale copy undid whatever had changed since: an endpoint switched off
  * scheduled runs in the list was switched back on by the next save of the
- * form. Left out, includeInSchedule, pingCount and order stay as the server
- * has them, and a new endpoint gets the defaults for its method.
+ * form. Left out, includeInSchedule, createsRecords, pingCount and order stay
+ * as the server has them, and a new endpoint gets the defaults for its method.
  */
 function editableFields(endpoint: Endpoint) {
   return {
@@ -72,7 +80,7 @@ interface ProjectContextType {
   refreshProjects: () => Promise<void>;
   addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
   updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<Endpoint | null>;
-  setIncludeInSchedule: (projectId: string, endpointId: string, include: boolean) => Promise<Endpoint | null>;
+  patchEndpoint: (projectId: string, endpointId: string, patch: EndpointPatch) => Promise<Endpoint | null>;
   reorderEndpoints: (projectId: string, endpointIds: string[]) => Promise<Reorder>;
   importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
   testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
@@ -239,27 +247,30 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   };
 
   /**
-   * Switch an endpoint in or out of scheduled runs. Its own PATCH, which takes
-   * nothing else, so a form open on the same endpoint neither has to be saved
-   * for this to stick nor can undo it later (see editableFields).
+   * Switch an endpoint in or out of scheduled runs, or mark whether it creates
+   * records. Its own PATCH, which takes nothing else, so a form open on the
+   * same endpoint neither has to be saved for this to stick nor can undo it
+   * later (see editableFields).
+   *
+   * Only the settings sent are taken from the response. The rest of it may
+   * have been read before another PATCH on the same endpoint landed.
    */
-  const setIncludeInSchedule = async (projectId: string, endpointId: string, include: boolean) => {
+  const patchEndpoint = async (projectId: string, endpointId: string, patch: EndpointPatch) => {
     try {
-      const json = await api.patch<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints/${endpointId}`, { includeInSchedule: include });
+      const json = await api.patch<ApiResponse<Endpoint>>(`/projects/${projectId}/endpoints/${endpointId}`, patch);
+
+      const applied: EndpointPatch = {};
+      if (patch.includeInSchedule !== undefined) applied.includeInSchedule = json.data?.includeInSchedule ?? patch.includeInSchedule;
+      if (patch.createsRecords !== undefined) applied.createsRecords = json.data?.createsRecords ?? patch.createsRecords;
 
       setProjects((prev) => prev.map(p =>
         p.id === projectId
-          ? {
-              ...p,
-              endpoints: asArray<Endpoint>(p.endpoints).map(ep =>
-                ep.id === endpointId ? { ...ep, includeInSchedule: json.data?.includeInSchedule ?? include } : ep
-              ),
-            }
+          ? { ...p, endpoints: asArray<Endpoint>(p.endpoints).map(ep => ep.id === endpointId ? { ...ep, ...applied } : ep) }
           : p
       ));
       return json.data ?? null;
     } catch (error) {
-      console.error("Error changing whether an endpoint is scheduled:", error);
+      console.error("Error changing an endpoint's settings:", error);
       if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
       return null;
     }
@@ -367,7 +378,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       refreshProjects: fetchProjects,
       addEndpoint,
       updateEndpoint,
-      setIncludeInSchedule,
+      patchEndpoint,
       reorderEndpoints,
       importSwagger,
       testEndpoint,

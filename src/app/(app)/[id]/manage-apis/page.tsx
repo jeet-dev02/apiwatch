@@ -45,7 +45,7 @@ export default function ApiManagerPage() {
     updateProjectEndpoints,
     addEndpoint,
     updateEndpoint,
-    setIncludeInSchedule,
+    patchEndpoint,
     reorderEndpoints,
     importSwagger,
     testEndpoint
@@ -87,6 +87,9 @@ export default function ApiManagerPage() {
   const [showScheduleDrawer, setShowScheduleDrawer] = useState(false);
   // Endpoints whose switch has a PATCH in flight.
   const [schedulePending, setSchedulePending] = useState<string[]>([]);
+  // Endpoints with a createsRecords PATCH in flight, from the editor's switch
+  // or the schedule drawer's "It creates nothing".
+  const [recordsPending, setRecordsPending] = useState<string[]>([]);
 
   // A move has a PUT /order in flight. Every arrow waits for it, since the
   // next move's list is built on this one's.
@@ -308,13 +311,39 @@ export default function ApiManagerPage() {
     formData.method !== savedCopy.method &&
     defaultIncludeInSchedule(formData.method) !== savedCopy.includeInSchedule;
 
+  // Read off the saved endpoint, never the form: the form's copy is not sent
+  // and goes stale, and a save that changes the method comes back with it
+  // reset to true. POSTs only, since nothing reads it for any other method;
+  // absent, the backend predates it.
+  const showCreatesRecords =
+    !!savedCopy &&
+    savedCopy.createsRecords !== undefined &&
+    savedCopy.method === "POST" &&
+    formData.method === "POST";
+  const createsRecords = savedCopy?.createsRecords !== false;
+  const recordsSaving = !!savedCopy && recordsPending.includes(savedCopy.id);
+
   const handleToggleSchedule = async (endpoint: Endpoint) => {
     const id = endpoint.id;
     if (endpoint.includeInSchedule === undefined || schedulePending.includes(id)) return;
 
     setSchedulePending((prev) => [...prev, id]);
-    const updated = await setIncludeInSchedule(currentProject.id, id, !endpoint.includeInSchedule);
+    const updated = await patchEndpoint(currentProject.id, id, { includeInSchedule: !endpoint.includeInSchedule });
     setSchedulePending((prev) => prev.filter((pending) => pending !== id));
+    if (updated) loadSchedule();
+  };
+
+  /**
+   * Mark whether a POST creates records, on its own PATCH as the schedule
+   * switch is, never with the form. Then the schedule is re-read: its
+   * "creates a record on every run" warning is the one thing that reads this.
+   */
+  const handleSetCreatesRecords = async (endpointId: string, createsRecords: boolean) => {
+    if (recordsPending.includes(endpointId)) return;
+
+    setRecordsPending((prev) => [...prev, endpointId]);
+    const updated = await patchEndpoint(currentProject.id, endpointId, { createsRecords });
+    setRecordsPending((prev) => prev.filter((pending) => pending !== endpointId));
     if (updated) loadSchedule();
   };
 
@@ -790,6 +819,31 @@ export default function ApiManagerPage() {
                           {errors.url && <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#ef4444", fontSize: 12, fontWeight: 500, marginTop: 8 }}><AlertCircle size={14} /> {errors.url}</div>}
                         </div>
                       </div>
+
+                      {/* Saved as soon as it is switched, like the schedule
+                          switch in the list; Save does not send it. */}
+                      {showCreatesRecords && savedCopy && (
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginTop: 24 }}>
+                          <button
+                            id="creates-records"
+                            role="switch"
+                            aria-checked={createsRecords}
+                            aria-describedby="creates-records-hint"
+                            disabled={recordsSaving}
+                            onClick={() => handleSetCreatesRecords(savedCopy.id, !createsRecords)}
+                            title={createsRecords ? "Click if this POST stores nothing. Saved straight away." : "Click if this POST does store something. Saved straight away."}
+                            style={{ flexShrink: 0, position: "relative", width: 28, height: 16, marginTop: 1, borderRadius: 8, border: "none", padding: 0, backgroundColor: createsRecords ? "#2563eb" : "#d1d5db", cursor: recordsSaving ? "wait" : "pointer", opacity: recordsSaving ? 0.5 : 1, transition: "background 0.2s" }}
+                          >
+                            <span style={{ position: "absolute", top: 2, left: createsRecords ? 14 : 2, width: 12, height: 12, borderRadius: "50%", backgroundColor: "#ffffff", boxShadow: "0 1px 2px rgba(0,0,0,0.2)", transition: "left 0.2s" }} />
+                          </button>
+                          <div>
+                            <label htmlFor="creates-records" style={{ fontSize: 13, fontWeight: 600, color: "#374151", cursor: recordsSaving ? "wait" : "pointer" }}>Creates records</label>
+                            <div id="creates-records-hint" style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+                              Turn off for a POST that stores nothing, like a login or a search, so the schedule stops warning about it.
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1050,6 +1104,8 @@ export default function ApiManagerPage() {
         onSaved={setSchedule}
         onSelectEndpoint={handleSelectById}
         endpoints={endpoints}
+        onMarkCreatesNothing={(endpointId) => handleSetCreatesRecords(endpointId, false)}
+        recordsPending={recordsPending}
       />
 
       <style dangerouslySetInnerHTML={{ __html: `@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}} />

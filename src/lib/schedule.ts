@@ -22,19 +22,34 @@ export interface ScheduleCoverage {
   blockedByChain: number;
 }
 
+/** An endpoint a warning names besides its own, as lib/chainPlan.ts refers to one. */
+export interface ScheduleEndpointRef {
+  id: string;
+  method: string;
+  path: string;
+}
+
 export interface ScheduleWarning {
   /**
    * "blocked" (left out because of a chain), "readBeforeSet" (reads a
    * {{variable}} before the endpoint that sets it runs), "notSetOnSchedule"
    * (reads one only switched-off endpoints set) or "accumulates" (a scheduled
-   * POST whose records nothing deletes). Only the message is shown, so a kind
-   * added later needs nothing here.
+   * POST whose records nothing deletes). The message is what is shown, so a
+   * kind added later needs nothing here; only "accumulates" is read, for the
+   * drawer's "It creates nothing" (see deletedBy).
    */
   kind: string;
   /** The endpoint the warning is about. */
   endpointId: string | null;
   /** Written by the backend for people: the reason, naming the endpoints involved. */
   message: string;
+  /**
+   * "accumulates" only: the DELETEs that would delete what the POST creates,
+   * none of them scheduled. Empty is the case where the POST may create
+   * nothing at all, a login or a search. Null when the backend did not send
+   * it, which says nothing either way.
+   */
+  deletedBy: ScheduleEndpointRef[] | null;
 }
 
 export interface Schedule {
@@ -75,6 +90,23 @@ function count(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * A list of endpoint refs, or null if it is not one. An entry that is not a
+ * ref makes the whole list null rather than being dropped: dropping it could
+ * turn a deletedBy that names a DELETE into an empty one, and empty is what
+ * offers "It creates nothing".
+ */
+function refsOrNull(value: unknown): ScheduleEndpointRef[] | null {
+  if (!Array.isArray(value)) return null;
+  const refs: ScheduleEndpointRef[] = [];
+  for (const entry of value) {
+    const ref = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+    if (!ref || typeof ref.id !== "string") return null;
+    refs.push({ id: ref.id, method: String(ref.method ?? ""), path: String(ref.path ?? "") });
+  }
+  return refs;
+}
+
 function isoOrNull(value: unknown): string | null {
   return typeof value === "string" && !Number.isNaN(new Date(value).getTime()) ? value : null;
 }
@@ -99,6 +131,7 @@ export function normaliseSchedule(raw: unknown): Schedule {
       kind: typeof warning.kind === "string" ? warning.kind : "",
       endpointId: typeof warning.endpointId === "string" ? warning.endpointId : null,
       message: warning.message,
+      deletedBy: refsOrNull(warning.deletedBy),
     });
   }
 

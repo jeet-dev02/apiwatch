@@ -27,8 +27,12 @@ interface ScheduleDrawerProps {
   onSaved: (schedule: Schedule) => void;
   /** Selects an endpoint in the list behind the drawer. */
   onSelectEndpoint: (endpointId: string) => void;
-  /** To name the endpoint a warning's "Open" link goes to. */
+  /** To name the endpoint a warning's "Open" link goes to, and see whether it has createsRecords. */
   endpoints: Endpoint[];
+  /** PATCHes the endpoint's createsRecords to false, then re-reads the schedule. */
+  onMarkCreatesNothing: (endpointId: string) => void;
+  /** Endpoints whose createsRecords PATCH is in flight. */
+  recordsPending: string[];
 }
 
 const methodColors = (method: string) => {
@@ -54,6 +58,8 @@ export default function ScheduleDrawer({
   onSaved,
   onSelectEndpoint,
   endpoints,
+  onMarkCreatesNothing,
+  recordsPending,
 }: ScheduleDrawerProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -270,23 +276,51 @@ export default function ScheduleDrawer({
                     {warnings.map((warning, index) => {
                       const endpoint = warning.endpointId ? endpoints.find((ep) => ep.id === warning.endpointId) : undefined;
                       const colors = endpoint ? methodColors(endpoint.method) : null;
+                      // A POST no DELETE in the project would clean up after
+                      // may create nothing at all, a login or a search, and
+                      // the backend's message says to mark it. One a DELETE
+                      // would clean up after plainly creates records, so it
+                      // gets no button. Nor does one whose endpoint lacks the
+                      // flag: that backend would refuse the PATCH.
+                      const canMarkCreatesNothing =
+                        warning.kind === "accumulates" &&
+                        warning.deletedBy?.length === 0 &&
+                        endpoint?.method === "POST" &&
+                        endpoint.createsRecords !== undefined;
+                      const marking = !!endpoint && recordsPending.includes(endpoint.id);
                       return (
                         <div key={`${warning.endpointId}-${index}`} style={{ border: "1px solid #fde68a", backgroundColor: "#fffbeb", borderRadius: 8, padding: "12px 14px" }}>
                           <div style={{ fontSize: 13, color: "#78350f", lineHeight: 1.5 }}>{warning.message}</div>
                           {endpoint && colors && (
-                            <button
-                              onClick={() => { onSelectEndpoint(endpoint.id); onClose(); }}
-                              title="Open this endpoint"
-                              style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8, padding: "4px 8px", backgroundColor: "#ffffff", border: "1px solid #fde68a", borderRadius: 6, cursor: "pointer", transition: "background 0.15s" }}
-                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#fef3c7"}
-                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#ffffff"}
-                            >
-                              <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}>
-                                {endpoint.method}
-                              </span>
-                              <span style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{endpoint.path}</span>
-                              <ArrowRight size={12} color="#92400e" />
-                            </button>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                              <button
+                                onClick={() => { onSelectEndpoint(endpoint.id); onClose(); }}
+                                title="Open this endpoint"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "4px 8px", backgroundColor: "#ffffff", border: "1px solid #fde68a", borderRadius: 6, cursor: "pointer", transition: "background 0.15s" }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#fef3c7"}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#ffffff"}
+                              >
+                                <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}>
+                                  {endpoint.method}
+                                </span>
+                                <span style={{ fontSize: 12, fontFamily: "monospace", color: "#374151" }}>{endpoint.path}</span>
+                                <ArrowRight size={12} color="#92400e" />
+                              </button>
+
+                              {canMarkCreatesNothing && (
+                                <button
+                                  onClick={() => onMarkCreatesNothing(endpoint.id)}
+                                  disabled={marking}
+                                  title={`Mark ${endpoint.method} ${endpoint.path} as creating no records. "Creates records" on its Request tab turns it back on.`}
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", fontSize: 12, fontWeight: 500, color: "#92400e", backgroundColor: "#ffffff", border: "1px solid #fde68a", borderRadius: 6, cursor: marking ? "wait" : "pointer", opacity: marking ? 0.6 : 1, transition: "background 0.15s" }}
+                                  onMouseEnter={(e) => { if (!marking) e.currentTarget.style.backgroundColor = "#fef3c7"; }}
+                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#ffffff"}
+                                >
+                                  {marking && <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />}
+                                  It creates nothing
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       );
