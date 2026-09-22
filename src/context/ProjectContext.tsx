@@ -73,6 +73,7 @@ interface ProjectContextType {
   addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
   updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<Endpoint | null>;
   setIncludeInSchedule: (projectId: string, endpointId: string, include: boolean) => Promise<Endpoint | null>;
+  reorderEndpoints: (projectId: string, endpointIds: string[]) => Promise<Reorder>;
   importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
   testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
   runAllTests: (projectId: string) => Promise<RunStart>;
@@ -89,6 +90,16 @@ export type RunStart =
   | { status: "started"; testRunId: string }
   | { status: "conflict"; testRunId: string | null; message: string }
   | { status: "failed" };
+
+/**
+ * What asking to reorder came to.
+ *
+ * `stale` is the backend's 409: the ids sent were not exactly the project's
+ * endpoints, because one was added or deleted since the list was read, and
+ * nothing moved. Sending them again would be refused again; the list has to
+ * be read afresh first.
+ */
+export type Reorder = "moved" | "stale" | "failed";
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
@@ -254,6 +265,47 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Put a project's endpoints in the order given, first to run first, which
+   * is the order every run calls them in. endpointIds has to be every one of
+   * the project's endpoints: PUT /order refuses anything else (see Reorder).
+   *
+   * The list shows the new order straight away. On success it becomes the
+   * server's list; on failure the endpoints are put back in the order they
+   * were in. Put back, not restored from a copy, so a schedule switch flipped
+   * while the request was out keeps its new value.
+   */
+  const reorderEndpoints = async (projectId: string, endpointIds: string[]): Promise<Reorder> => {
+    const putInOrder = (ids: string[]) => {
+      const position = new Map(ids.map((id, index) => [id, index]));
+      // An endpoint missing from ids goes last; sort is stable, so the ones
+      // listed keep their order among themselves.
+      const rank = (endpoint: Endpoint) => position.get(endpoint.id) ?? ids.length;
+      setProjects((prev) => prev.map(p =>
+        p.id === projectId
+          ? { ...p, endpoints: [...asArray<Endpoint>(p.endpoints)].sort((a, b) => rank(a) - rank(b)) }
+          : p
+      ));
+    };
+
+    const before = asArray<Endpoint>(projects.find((p) => p.id === projectId)?.endpoints).map((ep) => ep.id);
+    putInOrder(endpointIds);
+
+    try {
+      const json = await api.put<ApiResponse<Endpoint[]>>(`/projects/${projectId}/endpoints/order`, { endpointIds });
+
+      // Every endpoint as GET /endpoints sends it, in its new order.
+      if (Array.isArray(json.data)) updateProjectEndpoints(projectId, json.data);
+      return "moved";
+    } catch (error) {
+      putInOrder(before);
+      if (error instanceof ApiError && error.status === 409) return "stale";
+      console.error("Error reordering endpoints:", error);
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
+      return "failed";
+    }
+  };
+
   const testEndpoint = async (projectId: string, endpointId: string) => {
     try {
       return await api.post<ApiResponse<unknown>>(`/projects/${projectId}/endpoints/${endpointId}/test`);
@@ -316,6 +368,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       addEndpoint,
       updateEndpoint,
       setIncludeInSchedule,
+      reorderEndpoints,
       importSwagger,
       testEndpoint,
       runAllTests 

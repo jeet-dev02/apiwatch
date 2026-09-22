@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Plus, Play, Save, Trash2, Settings2, ArrowLeft, Check, AlertCircle, AlertTriangle, UploadCloud, PenLine, Loader2, Braces, CalendarClock } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Plus, Play, Save, Trash2, Settings2, ArrowLeft, Check, AlertCircle, AlertTriangle, UploadCloud, PenLine, Loader2, Braces, CalendarClock, ChevronUp, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useProjects, Endpoint, HttpMethod } from "@/context/ProjectContext";
@@ -46,6 +46,7 @@ export default function ApiManagerPage() {
     addEndpoint,
     updateEndpoint,
     setIncludeInSchedule,
+    reorderEndpoints,
     importSwagger,
     testEndpoint
   } = useProjects();
@@ -87,6 +88,12 @@ export default function ApiManagerPage() {
   // Endpoints whose switch has a PATCH in flight.
   const [schedulePending, setSchedulePending] = useState<string[]>([]);
 
+  // A move has a PUT /order in flight. Every arrow waits for it, since the
+  // next move's list is built on this one's.
+  const [isMoving, setIsMoving] = useState(false);
+  // The arrow a move was made from, if it had focus: see the effect below.
+  const refocusAfterMove = useRef<HTMLButtonElement | null>(null);
+
   useEffect(() => {
     if (currentProject) {
       // endpoints drives .length and .map below, so it has to be a list even
@@ -94,6 +101,15 @@ export default function ApiManagerPage() {
       setEndpoints(asArray<Endpoint>(currentProject.endpoints));
     }
   }, [currentProject?.endpoints]);
+
+  // React moves a row by moving its element, and an element that is moved
+  // loses focus, so without this moving a row down from the keyboard would
+  // drop focus back to the page. The arrow that was pressed keeps it.
+  useEffect(() => {
+    const button = refocusAfterMove.current;
+    refocusAfterMove.current = null;
+    if (button && button.isConnected && document.activeElement !== button) button.focus();
+  }, [endpoints]);
 
   const projectId = currentProject?.id;
 
@@ -300,6 +316,45 @@ export default function ApiManagerPage() {
     const updated = await setIncludeInSchedule(currentProject.id, id, !endpoint.includeInSchedule);
     setSchedulePending((prev) => prev.filter((pending) => pending !== id));
     if (updated) loadSchedule();
+  };
+
+  /**
+   * Swap an endpoint with the one above (-1) or below (1) it, saved straight
+   * away. Run order is what makes a chain work: POST /pet has to run before
+   * GET /pet/{{petId}}, login before anything that sends {{token}}.
+   */
+  const handleMove = async (index: number, offset: -1 | 1, button: HTMLButtonElement) => {
+    const target = index + offset;
+    if (isMoving || target < 0 || target >= endpoints.length) return;
+
+    const reordered = [...endpoints];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const hadFocus = document.activeElement === button ? button : null;
+
+    refocusAfterMove.current = hadFocus;
+    setIsMoving(true);
+    setEndpoints(reordered);
+    const result = await reorderEndpoints(currentProject.id, reordered.map((ep) => ep.id));
+
+    // Put back where it was, which moves the row again.
+    if (result !== "moved") refocusAfterMove.current = hadFocus;
+
+    // Nothing moved, and the same ids would be refused again: an endpoint was
+    // added or deleted since this list was read. Read it again rather than
+    // retrying, with the arrows off until it is back.
+    const reloaded = result === "stale" ? await loadEndpoints() : null;
+    setIsMoving(false);
+
+    if (result === "moved") {
+      // Its warnings depend on the order: a scheduled endpoint can read a
+      // {{variable}} before the endpoint that sets it runs.
+      loadSchedule();
+    } else if (reloaded) {
+      // Like an import, the reload can bring endpoints nobody here added.
+      loadEnvironment();
+      loadSchedule();
+      alert("The endpoint list had changed since this page loaded it, so nothing was moved. It has been reloaded: make the move again if it is still wanted.");
+    }
   };
 
   const handleSelect = (endpoint: Endpoint) => {
@@ -514,7 +569,7 @@ export default function ApiManagerPage() {
 
         {/* Project-scoped like Environment, and here rather than on Test Runs
             because what its warnings ask for is done in the list below:
-            switching an endpoint in or out of scheduled runs. */}
+            switching an endpoint in or out of scheduled runs, or moving it. */}
         <button
           onClick={() => setShowScheduleDrawer(true)}
           title="Scheduled runs"
@@ -560,7 +615,7 @@ export default function ApiManagerPage() {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {endpoints.map((ep) => {
+                {endpoints.map((ep, index) => {
                   const isActive = activeId === ep.id && !showZeroState;
                   const colors = getMethodColor(ep.method);
                   const included = ep.includeInSchedule;
@@ -568,6 +623,34 @@ export default function ApiManagerPage() {
                   const warnings = scheduleWarnings.get(ep.id);
                   return (
                     <div key={ep.id} onClick={() => handleSelect(ep)} style={{ display: "flex", alignItems: "center", padding: "10px 12px", borderRadius: 8, cursor: "pointer", transition: "all 0.15s ease", backgroundColor: isActive ? "#eff6ff" : "transparent", border: `1px solid ${isActive ? "#bfdbfe" : "transparent"}` }} onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "#f3f4f6"; }} onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}>
+                      {/* aria-disabled rather than disabled: a button that is
+                          disabled loses focus, so a keyboard user would lose
+                          their place on every move and at either end. */}
+                      <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, margin: "-5px 6px -5px -4px" }}>
+                        {([-1, 1] as const).map((offset) => {
+                          const neighbour = endpoints[index + offset];
+                          const Icon = offset === -1 ? ChevronUp : ChevronDown;
+                          const off = !neighbour || isMoving;
+                          return (
+                            <button
+                              key={offset}
+                              aria-label={`Move ${ep.method} ${ep.path} ${offset === -1 ? "up" : "down"}`}
+                              aria-disabled={off}
+                              title={
+                                isMoving ? "Saving the new order…"
+                                  : !neighbour ? (offset === -1 ? "Runs first" : "Runs last")
+                                  : `Run ${offset === -1 ? "before" : "after"} ${neighbour.method} ${neighbour.path}`
+                              }
+                              onClick={(e) => { e.stopPropagation(); if (!off) handleMove(index, offset, e.currentTarget); }}
+                              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 14, padding: 0, borderRadius: 3, border: "none", backgroundColor: "transparent", color: neighbour ? "#6b7280" : "#d1d5db", cursor: isMoving ? "wait" : neighbour ? "pointer" : "default", opacity: isMoving ? 0.5 : 1, transition: "background 0.15s" }}
+                              onMouseEnter={(e) => { if (!off) { e.currentTarget.style.backgroundColor = "#e5e7eb"; e.currentTarget.style.color = "#111827"; } }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = neighbour ? "#6b7280" : "#d1d5db"; }}
+                            >
+                              <Icon size={14} />
+                            </button>
+                          );
+                        })}
+                      </div>
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, marginRight: 12, width: 48, textAlign: "center" }}>{ep.method}</span>
                       <span style={{ fontSize: 13, fontWeight: isActive ? 600 : 500, color: isActive ? "#111827" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ep.path}</span>
 
@@ -601,6 +684,8 @@ export default function ApiManagerPage() {
 
                 {isCreating && (
                   <div style={{ display: "flex", alignItems: "center", padding: "10px 12px", borderRadius: 8, backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", animation: "fadeIn 0.2s" }}>
+                    {/* Where the arrows are on a saved endpoint, so the badges line up. */}
+                    <span style={{ width: 18, flexShrink: 0, margin: "0 6px 0 -4px" }} />
                     <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, backgroundColor: "#e5e7eb", color: "#6b7280", marginRight: 12, width: 48, textAlign: "center" }}>NEW</span>
                     <span style={{ fontSize: 13, fontWeight: 600, color: "#2563eb", fontStyle: "italic", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{formData.path}</span>
                   </div>

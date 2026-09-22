@@ -263,7 +263,7 @@ export default function ScheduleDrawer({
                 {warnings.length === 0 ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, color: "#15803d", fontSize: 13 }}>
                     <Check size={15} />
-                    None. Nothing switched on depends on an endpoint that is switched off.
+                    None. Nothing switched on depends on an endpoint that is switched off or runs after it.
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -296,7 +296,8 @@ export default function ScheduleDrawer({
 
                 <p style={{ margin: "16px 0 0", fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
                   Switch endpoints in or out of scheduled runs in the endpoint list. POST and DELETE start out switched off:
-                  on a schedule nobody is watching, one creates a record every run and the other deletes one.
+                  on a schedule nobody is watching, one creates a record every run and the other deletes one. The list is in
+                  run order, top first; move an endpoint with its arrows.
                 </p>
               </div>
             </>

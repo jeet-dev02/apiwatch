@@ -23,7 +23,13 @@ export interface ScheduleCoverage {
 }
 
 export interface ScheduleWarning {
-  /** "blocked" (left out because of a chain) or "accumulates" (a scheduled POST whose records nothing deletes). */
+  /**
+   * "blocked" (left out because of a chain), "readBeforeSet" (reads a
+   * {{variable}} before the endpoint that sets it runs), "notSetOnSchedule"
+   * (reads one only switched-off endpoints set) or "accumulates" (a scheduled
+   * POST whose records nothing deletes). Only the message is shown, so a kind
+   * added later needs nothing here.
+   */
   kind: string;
   /** The endpoint the warning is about. */
   endpointId: string | null;
