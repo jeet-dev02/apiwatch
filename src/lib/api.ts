@@ -38,6 +38,29 @@ type Options = {
   signal?: AbortSignal;
 };
 
+/**
+ * The words in a response's `error`.
+ *
+ * Usually a string. A route that fails its zod schema sends
+ * `error.flatten()` instead — { formErrors: [...], fieldErrors: { field:
+ * [...] } } — which String() turned into "[object Object]", so a mistyped
+ * swagger URL said nothing at all. Rendered here as "swaggerUrl: Invalid url".
+ */
+function describeError(error: unknown): string | null {
+  if (typeof error === "string") return error;
+  if (!error || typeof error !== "object") return null;
+
+  const { formErrors, fieldErrors } = error as { formErrors?: unknown; fieldErrors?: unknown };
+  const parts: string[] = [];
+  if (Array.isArray(formErrors)) parts.push(...formErrors.filter((e): e is string => typeof e === "string"));
+  if (fieldErrors && typeof fieldErrors === "object") {
+    for (const [field, messages] of Object.entries(fieldErrors)) {
+      if (Array.isArray(messages) && messages.length > 0) parts.push(`${field}: ${messages.join(", ")}`);
+    }
+  }
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
 async function request<T>(path: string, options: Options = {}): Promise<T> {
   const { method = "GET", body, signal } = options;
 
@@ -73,7 +96,7 @@ async function request<T>(path: string, options: Options = {}): Promise<T> {
   // password" instead of "Not authenticated".
   const serverMessage =
     payload && typeof payload === "object" && "error" in payload
-      ? String((payload as { error: unknown }).error)
+      ? describeError((payload as { error: unknown }).error)
       : null;
 
   if (response.status === 401) {

@@ -497,7 +497,7 @@ export default function ApiManagerPage() {
     try {
       // No baseUrlOverride: the document says where its endpoints live (see
       // CreateProjectModal). Sending the URL's origin here overrode it.
-      await importSwagger(currentProject.id, importUrl.trim());
+      await importSwagger(currentProject.id, { swaggerUrl: importUrl.trim() });
       await loadEndpoints();
 
       // An import is what fills a project with {{placeholders}} to begin with.
@@ -510,7 +510,9 @@ export default function ApiManagerPage() {
       setIsManualMode(false); 
     } catch (error) {
       console.error(error);
-      setIsImporting(false); 
+      // importSwagger leaves showing the backend's reason to its caller.
+      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
+      setIsImporting(false);
     }
   };
 

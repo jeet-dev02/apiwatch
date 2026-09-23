@@ -5,7 +5,7 @@ import { useProjects } from "@/context/ProjectContext";
 
 import ProjectGridCard from "@/components/ProjectGridCard";
 import CreateProjectGhostCard from "@/components/CreateProjectGhostCard";
-import CreateProjectModal, { CreateProjectData } from "@/components/CreateProjectModal";
+import CreateProjectModal from "@/components/CreateProjectModal";
 import GlobalRunnerModal from "@/components/GlobalRunnerModal";
 import { useNavigation } from "@/context/NavigationContext";
 
@@ -15,11 +15,8 @@ export default function ProjectsPage() {
   const [isPreparingModal, setIsPreparingModal] = useState(false); // 
   const [runnerProjectId, setRunnerProjectId] = useState<string | null>(null); 
   
-  const { projects, addProject } = useProjects();
+  const { projects } = useProjects();
 
-  const handleCreateNewProject = async (data: CreateProjectData) => {
-    await addProject(data.name, data.url, data.baseUrlOverride);
-  };
   const { startNavigation, stopNavigation } = useNavigation();
   
   const handleOpenCreateModal = () => {
@@ -69,7 +66,6 @@ export default function ProjectsPage() {
       <CreateProjectModal 
         isOpen={isCreateModalOpen} 
         onClose={() => setIsCreateModalOpen(false)} 
-        onCreate={handleCreateNewProject}
       />
       
       <GlobalRunnerModal 

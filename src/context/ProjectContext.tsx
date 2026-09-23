@@ -74,15 +74,15 @@ export type ProjectData = {
 // --- Context Definition ---
 interface ProjectContextType {
   projects: ProjectData[];
-  addProject: (name: string, swaggerUrl?: string, baseUrlOverride?: string) => Promise<void>;
-  removeProject: (id: string) => Promise<void>;
+  createProject: (name: string) => Promise<ProjectData>;
+  removeProject: (id: string) => Promise<boolean>;
   updateProjectEndpoints: (projectId: string, endpoints: Endpoint[]) => void;
   refreshProjects: () => Promise<void>;
   addEndpoint: (projectId: string, endpoint: Endpoint) => Promise<void>;
   updateEndpoint: (projectId: string, endpoint: Endpoint) => Promise<Endpoint | null>;
   patchEndpoint: (projectId: string, endpointId: string, patch: EndpointPatch) => Promise<Endpoint | null>;
   reorderEndpoints: (projectId: string, endpointIds: string[]) => Promise<Reorder>;
-  importSwagger: (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => Promise<void>;
+  importSwagger: (projectId: string, source: ImportSource, baseUrlOverride?: string) => Promise<void>;
   testEndpoint: (projectId: string, endpointId: string) => Promise<any>;
   runAllTests: (projectId: string) => Promise<RunStart>;
 }
@@ -108,6 +108,17 @@ export type RunStart =
  * be read afresh first.
  */
 export type Reorder = "moved" | "stale" | "failed";
+
+/**
+ * Where an import's document comes from: a URL the backend fetches, or the
+ * document itself, pasted. POST /import-swagger takes exactly one.
+ *
+ * A pasted document is sent as the text it was pasted as, not parsed here
+ * first: the backend's parser says what is wrong with it ("not valid JSON:
+ * Unexpected token '<'" is what tells someone they pasted the HTML page), and
+ * parsing here would put a browser's wording in its place.
+ */
+export type ImportSource = { swaggerUrl: string } | { document: string };
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
@@ -158,42 +169,36 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     fetchProjects();
   }, [authLoading, userId, fetchProjects]);
 
-  const addProject = async (name: string, swaggerUrl?: string, baseUrlOverride?: string) => { 
-    try {
-      const json = await api.post<ApiResponse<ProjectData>>("/projects", { title: name });
+  /**
+   * Create an empty project. Importing into it is a separate call, so that an
+   * import that fails can be retried against this project rather than by
+   * creating another one. Throws, for the create modal to show why.
+   */
+  const createProject = async (name: string) => {
+    const json = await api.post<ApiResponse<ProjectData>>("/projects", { title: name });
 
-      if (!json.data?.id) {
-        throw new Error("The server created the project but returned nothing to show.");
-      }
-
-      const newProject = normaliseProject(json.data);
-      setProjects((prev) => [newProject, ...prev]);
-
-      if (swaggerUrl && swaggerUrl.trim() !== "") {
-        try {
-          await importSwagger(newProject.id, swaggerUrl.trim(), baseUrlOverride);
-        } catch (importError) {
-          console.error("Swagger import failed during project creation", importError);
-          alert("Project was created, but we couldn't import the Swagger URL. You can try again from the API Manager.");
-        }
-      }
-    } catch (error) {
-      console.error("Error creating project:", error);
-      // A 401 already redirects to /login; alerting would flash mid-navigation.
-      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
+    if (!json.data?.id) {
+      throw new Error("The server created the project but returned nothing to show.");
     }
+
+    const newProject = normaliseProject(json.data);
+    setProjects((prev) => [newProject, ...prev]);
+    return newProject;
   };
 
+  /** True if the project is gone. */
   const removeProject = async (id: string) => {
     try {
       const json = await api.delete<ApiResponse<unknown>>(`/projects/${id}`);
 
       if (json.success) {
         setProjects((prev) => prev.filter((project) => project.id !== id));
+        return true;
       }
     } catch (error) {
       console.error("Error deleting project:", error);
     }
+    return false;
   };
 
   // Stable, so the API Manager can load through it from an effect.
@@ -328,9 +333,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const importSwagger = async (projectId: string, swaggerUrl: string, baseUrlOverride?: string) => {
+  /**
+   * Import a document's endpoints into a project. Throws with the backend's
+   * own reason, and does not alert it: the reason is the useful part (not
+   * JSON, JSON but not a spec, too big, a relative server URL), and the caller
+   * shows it next to the input that has to change.
+   */
+  const importSwagger = async (projectId: string, source: ImportSource, baseUrlOverride?: string) => {
     try {
-      const json = await api.post<ApiResponse<Endpoint[]>>(`/projects/${projectId}/import-swagger`, { swaggerUrl, baseUrlOverride });
+      const json = await api.post<ApiResponse<Endpoint[]>>(`/projects/${projectId}/import-swagger`, { ...source, baseUrlOverride });
 
       setProjects((prev) => prev.map(p =>
         p.id === projectId
@@ -339,7 +350,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       ));
     } catch (error) {
       console.error("Error importing swagger:", error);
-      if (!(error instanceof UnauthorizedError)) alert((error as Error).message);
+      // Fastify's body limit answers before the route does, so its 413 says
+      // "Payload Too Large" rather than naming the document's limit. The route
+      // allows a 2 MB document plus 1 MB for the escaping a pasted string
+      // picks up; anything past that is well over the document limit anyway.
+      if (error instanceof ApiError && error.status === 413) {
+        throw new ApiError("The document is over the 2 MB limit.", 413, error.body);
+      }
       throw error;
     }
   };
@@ -372,7 +389,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   return (
     <ProjectContext.Provider value={{ 
       projects, 
-      addProject, 
+      createProject, 
       removeProject, 
       updateProjectEndpoints, 
       refreshProjects: fetchProjects,

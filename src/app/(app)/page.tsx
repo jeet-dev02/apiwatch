@@ -10,7 +10,7 @@ import ActiveAlertsPanel from "@/components/ActiveAlertsPanel";
 import QuickActionsPanel from "@/components/QuickActionsPanel";
 import GlobalPerformanceChart from "@/components/GlobalPerformanceChart"; 
 import CreateProjectHeaderButton from "@/components/CreateProjectHeaderButton";
-import CreateProjectModal, { CreateProjectData } from "@/components/CreateProjectModal";
+import CreateProjectModal from "@/components/CreateProjectModal";
 import { Folder, Code2, Activity, ShieldAlert, BellRing } from "lucide-react";
 import { useNavigation } from "@/context/NavigationContext";
 import { api, ApiResponse } from "@/lib/api";
@@ -19,7 +19,7 @@ export default function Home() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isPreparingModal, setIsPreparingModal] = useState(false); // ✨ NEW STATE for the spinner
   
-  const { projects, addProject } = useProjects();
+  const { projects } = useProjects();
   const [statsData, setStatsData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { startNavigation, stopNavigation } = useNavigation();
@@ -41,10 +41,6 @@ export default function Home() {
 
     fetchDashboardStats();
   }, []);
-
-  const handleCreateNewProject = async (data: CreateProjectData) => {
-    await addProject(data.name, data.url, data.baseUrlOverride);
-  };
 
   // ✨ NEW FUNCTION: Triggers the spinner, locks the screen, then opens the modal
   const handleOpenCreateModal = () => {
@@ -147,7 +143,6 @@ export default function Home() {
       <CreateProjectModal 
         isOpen={isCreateModalOpen} 
         onClose={() => setIsCreateModalOpen(false)} 
-        onCreate={handleCreateNewProject}
       />
     </div>
   );
