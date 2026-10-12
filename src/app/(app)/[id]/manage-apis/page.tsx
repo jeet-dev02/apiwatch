@@ -970,13 +970,25 @@ export default function ApiManagerPage() {
                         {testResult.passed ? "TEST PASSED" : "TEST FAILED"}
                       </span>
                       <span style={{ fontSize: 13, color: "#374151", backgroundColor: "#fff", padding: "4px 8px", borderRadius: 4, border: "1px solid #d1d5db" }}>
-                        Status: <strong>{testResult.statusCode}</strong>
+                        Status: <strong>{testResult.statusCode ?? "—"}</strong>
                       </span>
                       <span style={{ fontSize: 13, color: "#374151", backgroundColor: "#fff", padding: "4px 8px", borderRadius: 4, border: "1px solid #d1d5db" }}>
                         Time: <strong>{testResult.responseTime}ms</strong>
                       </span>
                     </div>
                     
+                    {/* Why it failed: a script that threw, with its own message, or no answer at all */}
+                    {testResult.failure && (
+                      <div style={{ marginBottom: 16, fontSize: 13, color: "#7f1d1d" }}>
+                        <strong>
+                          {testResult.failure.reason === "script"
+                            ? `${testResult.failure.script === "pre-request" ? "Pre-request" : "Post-response"} script failed`
+                            : "Connection failed"}
+                        </strong>
+                        {testResult.failure.message && <>: {testResult.failure.message}</>}
+                      </div>
+                    )}
+
                     {/* Render Post-Response Script Assertion Results if any exist */}
                     {testResult.scriptTests && testResult.scriptTests.length > 0 && (
                       <div style={{ marginBottom: 16, display: "flex", flexDirection: "column", gap: 4 }}>
