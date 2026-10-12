@@ -977,15 +977,26 @@ export default function ApiManagerPage() {
                       </span>
                     </div>
                     
-                    {/* Why it failed: a script that threw, with its own message, or no answer at all */}
+                    {/* Why it failed, one heading per kind of fix: a script that threw, no answer,
+                        a credential to enter again, or an error of APIWatch's own. An unknown
+                        reason says only that it failed, never "Connection failed". */}
                     {testResult.failure && (
                       <div style={{ marginBottom: 16, fontSize: 13, color: "#7f1d1d" }}>
                         <strong>
                           {testResult.failure.reason === "script"
                             ? `${testResult.failure.script === "pre-request" ? "Pre-request" : "Post-response"} script failed`
-                            : "Connection failed"}
+                            : testResult.failure.reason === "connection"
+                              ? "Connection failed"
+                              : testResult.failure.reason === "credential"
+                                ? "Credential problem"
+                                : testResult.failure.reason === "internal"
+                                  ? "Internal error"
+                                  : "Test failed"}
                         </strong>
                         {testResult.failure.message && <>: {testResult.failure.message}</>}
+                        {testResult.failure.reason === "credential" && (
+                          <>. Enter the token again on the Auth tab and save.</>
+                        )}
                       </div>
                     )}
 
